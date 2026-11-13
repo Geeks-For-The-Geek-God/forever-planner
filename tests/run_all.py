@@ -2,7 +2,7 @@
 import os, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 failed = []
-for name in ("test.py", "test_catchup.py", "test_gear.py", "test_update.py"):
+for name in ("test.py", "test_catchup.py", "test_gear.py", "test_update.py", "test_talents.py"):
     print(f"=== {name}")
     r = subprocess.run([sys.executable, os.path.join(HERE, name)], capture_output=True, text=True)
     out = r.stdout + r.stderr

@@ -542,3 +542,148 @@ function FP:UpdateUI()
   self:UpdateTracker()
   self:UpdateMain(false)
 end
+
+------------------------------------------------------------------------
+-- Talent screen: glow on the next planned talent, a note saying what and where,
+-- and a glow on the tree's tab when the pick is in another tree.
+-- Purely visual: you still click the talent yourself.
+------------------------------------------------------------------------
+local TALENT_FRAMES = { "TalentFrame", "PlayerTalentFrame" }
+local glow, tabGlow, hint, watcher
+
+local function MakeGlow(parent)
+  local f = CreateFrame("Frame", nil, parent)
+  f:SetFrameStrata("DIALOG")
+  local t = f:CreateTexture(nil, "OVERLAY")
+  t:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+  t:SetBlendMode("ADD")
+  t:SetVertexColor(1, 0.82, 0)
+  t:SetPoint("CENTER")
+  f.tex = t
+  local ag = f.CreateAnimationGroup and f:CreateAnimationGroup()
+  if ag then
+    ag:SetLooping("BOUNCE")
+    local a = ag:CreateAnimation("Alpha")
+    if a then
+      a:SetFromAlpha(1); a:SetToAlpha(0.35); a:SetDuration(0.7)
+    end
+    f.anim = ag
+  end
+  f:Hide()
+  return f
+end
+
+local function ShowGlowOn(g, target, size)
+  g:SetParent(target)
+  g:ClearAllPoints()
+  g:SetAllPoints(target)
+  g.tex:SetSize(size, size)
+  g:Show()
+  if g.anim and not g.anim:IsPlaying() then g.anim:Play() end
+end
+
+local function HideGlow(g)
+  if g then
+    if g.anim then g.anim:Stop() end
+    g:Hide()
+  end
+end
+
+local function OpenTalentFrame()
+  for _, name in ipairs(TALENT_FRAMES) do
+    local f = _G[name]
+    if f and f.IsShown and f:IsShown() then return f, name end
+  end
+end
+
+local function SelectedTab(frame, name)
+  if PanelTemplates_GetSelectedTab then
+    local ok, t = pcall(PanelTemplates_GetSelectedTab, frame)
+    if ok and type(t) == "number" then return t end
+  end
+  return frame.selectedTab or frame.currentSelectedTab
+end
+
+local function SameIcon(a, b)
+  if a == nil or b == nil then return true end -- can't compare: trust the index
+  return tostring(a):lower() == tostring(b):lower()
+end
+
+-- Finds the talent button for the pick on the currently shown tree, if any.
+local function FindButton(frameName, info)
+  for i = 1, 100 do
+    local b = _G[frameName .. "Talent" .. i]
+    if not b then break end
+    if b.IsShown and b:IsShown() and b.GetID and b:GetID() == info.index then
+      local icon = _G[frameName .. "Talent" .. i .. "IconTexture"]
+      if SameIcon(icon and icon.GetTexture and icon:GetTexture(), info.icon) then return b end
+    end
+  end
+end
+
+function FP:UpdateTalentGlow()
+  local frame, frameName = OpenTalentFrame()
+  if not frame then HideGlow(glow); HideGlow(tabGlow); if hint then hint:Hide() end; return end
+  if not (self.plan and self.char) or self.char.talentGlow == false then
+    HideGlow(glow); HideGlow(tabGlow); if hint then hint:Hide() end; return
+  end
+  if not glow then glow = MakeGlow(frame); tabGlow = MakeGlow(frame) end
+  if not hint then
+    hint = CreateFrame("Frame", nil, frame)
+    hint:SetSize(320, 34)
+    Bg(hint, 0.75)
+    hint.text = hint:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    hint.text:SetPoint("TOPLEFT", 6, -4)
+    hint.text:SetWidth(308)
+    hint.text:SetJustifyH("LEFT")
+  end
+  hint:SetParent(frame)
+  hint:ClearAllPoints()
+  hint:SetPoint("BOTTOM", frame, "TOP", 0, 2)
+
+  local pts = self:UnspentTalentPoints()
+  local nxt = self:NextTalentInfo()
+  if not nxt then
+    hint.text:SetText(GOLD .. "Forever Planner:|r every planned talent is taken.")
+    hint:Show(); HideGlow(glow); HideGlow(tabGlow)
+    return
+  end
+  local info = nxt.info
+  local where = ""
+  if info then
+    where = (" - %s tree, row %s, column %s"):format(info.tabName or ("tree " .. info.tab), tostring(info.tier or "?"), tostring(info.column or "?"))
+  end
+  local lead = (pts and pts > 0) and ("Spend your point: " .. WHITE .. nxt.text .. "|r") or ("Next pick (level " .. nxt.level .. "): " .. WHITE .. nxt.text .. "|r")
+  hint.text:SetText(GOLD .. "Forever Planner|r  " .. lead .. where)
+  hint:SetHeight(hint.text:GetStringHeight() + 10)
+  hint:Show()
+
+  HideGlow(glow); HideGlow(tabGlow)
+  if not (info and pts and pts > 0) then return end
+  local shownTab = SelectedTab(frame, frameName)
+  if shownTab == nil or shownTab == info.tab then
+    local b = FindButton(frameName, info)
+    if b then ShowGlowOn(glow, b, (b.GetWidth and b:GetWidth() or 37) * 1.9) end
+  end
+  if shownTab ~= nil and shownTab ~= info.tab then
+    local tabButton = _G[frameName .. "Tab" .. info.tab]
+    if tabButton then ShowGlowOn(tabGlow, tabButton, (tabButton.GetWidth and tabButton:GetWidth() or 80) * 1.3) end
+  end
+end
+
+-- Watch for the talent screen opening, switching tree or changing, without touching Blizzard's code.
+watcher = CreateFrame("Frame")
+local elapsed, wasOpen, lastKey = 0, false, nil
+watcher:SetScript("OnUpdate", function(_, dt)
+  elapsed = elapsed + (dt or 0)
+  if elapsed < 0.2 then return end
+  elapsed = 0
+  local frame, frameName = OpenTalentFrame()
+  local key = frame and (frameName .. ":" .. tostring(SelectedTab(frame, frameName)) .. ":" .. tostring(FP:UnspentTalentPoints()) .. ":" .. tostring(FP.talentSpent))
+  if (frame ~= nil) ~= wasOpen or key ~= lastKey then
+    wasOpen, lastKey = frame ~= nil, key
+    if frame then FP:ScanTalents() end
+    FP:UpdateTalentGlow()
+  end
+end)
+FP.talentWatcher = watcher

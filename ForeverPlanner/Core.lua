@@ -3,9 +3,10 @@
 
 ForeverPlanner = ForeverPlanner or {}
 local FP = ForeverPlanner
-FP.version = "0.4.0"
+FP.version = "0.4.1"
 -- Shown once after an update (newest first). Keep each line short.
 FP.news = {
+  "Talent screen: your next planned talent now glows, with a note saying what to take and where.",
   "The route now runs to level 60 (steps 114-153, then 40-60 hubs and dungeons), with gear for 40-49, 50-59 and 60.",
   "Updates now install themselves (Windows updater). After an update, /reload.",
   "0.3.0: gear linked to route steps, Still need list, loot and quest-reward prompts.",
@@ -459,21 +460,35 @@ function FP:ParseTalent(text)
 end
 
 function FP:ScanTalents()
-  local ranks = {}
-  local found = false
+  local ranks, where = {}, {}
+  local found, spent = false, 0
   if GetNumTalentTabs and GetNumTalents and GetTalentInfo then
     pcall(function()
       for tab = 1, (GetNumTalentTabs() or 0) do
+        local tabName = GetTalentTabInfo and select(1, GetTalentTabInfo(tab)) or nil
         for i = 1, (GetNumTalents(tab) or 0) do
-          local name, _, _, _, rank = GetTalentInfo(tab, i)
+          local name, icon, tier, column, rank, maxRank = GetTalentInfo(tab, i)
           if type(name) == "string" and type(rank) == "number" then
-            ranks[Norm(name)] = rank; found = true
+            ranks[Norm(name)] = rank; found = true; spent = spent + rank
+            where[Norm(name)] = { tab = tab, index = i, tier = tier, column = column, icon = icon,
+              rank = rank, maxRank = maxRank, tabName = type(tabName) == "string" and tabName or nil }
           end
         end
       end
     end)
   end
   self.talentRanks = found and ranks or nil
+  self.talentWhere = found and where or nil
+  self.talentSpent = found and spent or nil
+end
+
+-- The next planned pick with where it sits in the talent tree (nil fields if the client doesn't say).
+function FP:NextTalentInfo()
+  local level, text = self:NextTalent()
+  if not level then return nil end
+  local name, rank = self:ParseTalent(text)
+  local info = self.talentWhere and self.talentWhere[Norm(name)]
+  return { level = level, text = text, name = name, rank = rank, info = info }
 end
 
 function FP:UnspentTalentPoints()
@@ -485,6 +500,8 @@ function FP:UnspentTalentPoints()
     local ok, n = pcall(GetUnspentTalentPoints)
     if ok and type(n) == "number" then return n end
   end
+  -- Fallback: one point per level from 10, minus what's spent (Legacy "Talented" may add more).
+  if self.talentSpent then return math.max(0, self:PlayerLevel() - 9 - self.talentSpent) end
   return nil
 end
 
@@ -853,6 +870,7 @@ ev:SetScript("OnEvent", function(_, event, ...)
     FP:QueueRefresh()
   elseif event == "CHARACTER_POINTS_CHANGED" or event == "PLAYER_TALENT_UPDATE" then
     FP:ScanTalents()
+    if FP.UpdateTalentGlow then FP:UpdateTalentGlow() end
     FP:QueueRefresh()
   elseif event == "PLAYER_EQUIPMENT_CHANGED" or event == "BAG_UPDATE_DELAYED" or event == "UNIT_INVENTORY_CHANGED" then
     FP:ScanItems()
@@ -892,6 +910,7 @@ local HELP = {
   "/fp sync - re-read your quest history",
   "/fp catchup - preview skipping unfinished steps behind your furthest progress; confirm to apply, undo to reverse",
   "/fp lock - lock or unlock the tracker position",
+  "/fp talentglow - turn the talent screen highlight on or off",
   "/fp reset confirm - clear this character's route progress",
 }
 
@@ -916,6 +935,10 @@ SlashCmdList["FOREVERPLANNER"] = function(msg)
   elseif cmd == "autoway" then
     FP.char.autoWay = not FP.char.autoWay
     FP:Print("Automatic waypoints " .. (FP.char.autoWay and "on." or "off."))
+  elseif cmd == "talentglow" then
+    FP.char.talentGlow = (FP.char.talentGlow == false)
+    FP:Print("Talent screen highlight " .. (FP.char.talentGlow and "on." or "off."))
+    if FP.UpdateTalentGlow then FP:UpdateTalentGlow() end
   elseif cmd == "lock" then
     FP.char.locked = not FP.char.locked
     FP:Print("Tracker " .. (FP.char.locked and "locked." or "unlocked: drag it to move."))
