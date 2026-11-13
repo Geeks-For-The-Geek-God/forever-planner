@@ -1,5 +1,7 @@
 import os, sys
 from lupa.lua51 import LuaRuntime
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness
 S = os.path.dirname(os.path.abspath(__file__)); A = os.path.join(S, "..", "ForeverPlanner") + "/"
 fails = []
 def check(c, m):
@@ -12,7 +14,7 @@ def session(saved_db, saved_char):
         lua.eval("function(src,n) local f,e=loadstring(src,n); if not f then error(e) end; return f end")(open(p).read(), p)()
     load(os.path.join(S, "wowstub.lua"))
     lua.execute(saved_db); lua.execute(saved_char)
-    for f in ["Core.lua", "Data/Druid.lua", "UI.lua"]: load(A + f)
+    for f in harness.toc_files(routes=False): load(A + f)
     lua.execute('FireEvent("ADDON_LOADED","ForeverPlanner"); FireEvent("PLAYER_LOGIN")')
     return [l for l in G.OUT.values()], G
 

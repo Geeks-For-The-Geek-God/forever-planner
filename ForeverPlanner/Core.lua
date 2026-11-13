@@ -3,16 +3,17 @@
 
 ForeverPlanner = ForeverPlanner or {}
 local FP = ForeverPlanner
-FP.version = "0.4.3"
+FP.version = "0.5.0"
 -- Shown once after an update (newest first). Keep each line short.
 FP.news = {
+  "Every character now gets a plan on first login: a levelling route from its starting zone to 60 (Polestar's routes), talents for your spec, and class quests. A short setup window asks your spec once.",
   "Talents: now read from Forever's own talent system, so the next pick glows on the talent window and the tracker sees your points.",
   "The route now runs to level 60 (steps 114-153, then 40-60 hubs and dungeons), with gear for 40-49, 50-59 and 60.",
   "Updates now install themselves (Windows updater). After an update, /reload.",
   "0.3.0: gear linked to route steps, Still need list, loot and quest-reward prompts.",
 }
-FP.plans = {}
 FP.log = {}          -- normalised title -> { title, id, complete }
+FP.logById = {}      -- quest ID -> { title, complete, objs = { [n] = finished } }
 FP.doneCount = {}    -- normalised title -> number of times turned in
 FP.idTitle = {}      -- quest ID -> title (seen this session)
 FP.status = {}       -- route index -> "open" | "done" | "skipped"
@@ -74,23 +75,52 @@ local function safe(fn, ...)
   return pcall(fn, ...)
 end
 
-function FP:RegisterPlan(plan)
-  self.plans[plan.class] = plan
+-- Forever's client can hand addons "secret" values in combat; comparing one throws, so read through this.
+function FP:Readable(v)
+  if v ~= nil and issecretvalue and issecretvalue(v) then return nil end
+  return v
 end
 
 function FP:PlayerLevel()
-  return (UnitLevel and UnitLevel("player")) or 1
+  local lvl = UnitLevel and self:Readable(UnitLevel("player"))
+  if type(lvl) == "number" and lvl > 0 then self.lastLevel = lvl; return lvl end
+  return self.lastLevel or 1
 end
 
 ------------------------------------------------------------------------
 -- Quest log and quest history
 ------------------------------------------------------------------------
+local function Objectives(id, logIndex)
+  local objs
+  if id and C_QuestLog and C_QuestLog.GetQuestObjectives then
+    local ok, list = pcall(C_QuestLog.GetQuestObjectives, id)
+    if ok and type(list) == "table" then
+      objs = {}
+      for n, ob in ipairs(list) do objs[n] = ob.finished and true or false end
+      if #list > 0 then return objs end
+    end
+  end
+  if logIndex and GetNumQuestLeaderBoards and GetQuestLogLeaderBoard then
+    pcall(function()
+      objs = {}
+      for n = 1, (GetNumQuestLeaderBoards(logIndex) or 0) do
+        local _, _, finished = GetQuestLogLeaderBoard(n, logIndex)
+        objs[n] = finished and true or false
+      end
+    end)
+  end
+  return objs
+end
+
 function FP:ScanLog()
-  local log = {}
-  local function add(title, id, complete)
+  local log, byId = {}, {}
+  local function add(title, id, complete, logIndex)
     if type(title) ~= "string" or title == "" then return end
-    log[Norm(title)] = { title = title, id = id, complete = complete and true or false }
+    local e = { title = title, id = id, complete = complete and true or false }
+    log[Norm(title)] = e
     if id then
+      e.objs = Objectives(id, logIndex)
+      byId[id] = e
       self.idTitle[id] = title
       if self.db then self.db.titles[id] = title end
     end
@@ -101,7 +131,7 @@ function FP:ScanLog()
       local num = GetNumQuestLogEntries() or 0
       for i = 1, num do
         local title, _, _, isHeader, _, isComplete, _, questID = GetQuestLogTitle(i)
-        if title and not isHeader then add(title, questID, isComplete == 1 or isComplete == true) end
+        if title and not isHeader then add(title, questID, isComplete == 1 or isComplete == true, i) end
       end
     end)
   end
@@ -113,19 +143,21 @@ function FP:ScanLog()
         if info and not info.isHeader then
           local done = info.isComplete
           if done == nil and info.questID and C_QuestLog.IsComplete then done = C_QuestLog.IsComplete(info.questID) end
-          add(info.title, info.questID, done)
+          add(info.title, info.questID, done, i)
         end
       end
     end)
   end
-  self.log = log
+  self.log, self.logById = log, byId
 end
 
 function FP:Recount()
   local c = {}
   for _, title in pairs(self.char.doneIds) do
-    local k = Norm(title)
-    c[k] = (c[k] or 0) + 1
+    if type(title) == "string" then
+      local k = Norm(title)
+      c[k] = (c[k] or 0) + 1
+    end
   end
   for title, n in pairs(self.char.doneExtra) do
     local k = Norm(title)
@@ -187,16 +219,19 @@ function FP:ImportHistory(verbose)
   end
   local added, unknown = 0, 0
   for _, id in ipairs(ids) do
-    if not self.char.doneIds[id] then
-      local title = self:TitleForID(id)
-      if title then self.char.doneIds[id] = title; added = added + 1 else unknown = unknown + 1 end
+    local have = self.char.doneIds[id]
+    if type(have) ~= "string" then
+      local title = self:TitleForID(id) or FP.QT[id]
+      if title then self.char.doneIds[id] = title; added = added + 1
+      else self.char.doneIds[id] = true; if have == nil then unknown = unknown + 1 end end
     end
   end
+  self.historyImported = true
   self:Recount()
   if verbose then
     self:Print(("Quest history: %d completed quests found, %d newly matched, %d without a name."):format(#ids, added, unknown))
     if unknown > 0 and not self.questieDB then
-      self:Print("Questie isn't loaded, so some old quests couldn't be named. Use Done/Skip on those steps.")
+      self:Print("Questie isn't loaded, so some old quests have no name. Route steps match quest IDs, so only title-matched steps are affected.")
     end
   end
   return #ids, added, unknown
@@ -205,65 +240,148 @@ end
 ------------------------------------------------------------------------
 -- Route state
 ------------------------------------------------------------------------
-function FP:ObjDone(o)
+-- o: one goal of a step. Quest goals with an ID are matched by ID; older plans match by title.
+-- step/idx are given for goals the quest log can't see (places, trainers), which are ticked once seen.
+function FP:ObjDone(o, step, idx)
+  local k = o.k
+  if o.id and o.id ~= 0 and (k == "a" or k == "t" or k == "c" or k == "o") then
+    local done = self.char.doneIds[o.id] ~= nil
+    if done then return true end
+    local L = self.logById[o.id]
+    if k == "t" then return false
+    elseif k == "a" then return L ~= nil
+    elseif k == "c" then return (L and L.complete) and true or false
+    else return (L and (L.complete or (L.objs and L.objs[o.i or 1]))) and true or false end
+  end
+  if k == "l" then
+    if o.fr then return self:LevelProgress() >= (o.id or 0) + o.fr end
+    return self:PlayerLevel() >= (o.id or 0)
+  end
+  if k == "i" then return true end
+  if FP.SOFT[k] then return (step and idx and self:Ticked(step, idx)) or false end
+  -- Title-matched goals (plans written before quest IDs)
   local key = Norm(o.q)
   local n = o.n or 1
   local done = self.doneCount[key] or 0
   local inLog = self.log[key]
-  if o.k == "t" then
+  if k == "t" then
     return done >= n
-  elseif o.k == "a" then
+  elseif k == "a" then
     return done >= n or (inLog ~= nil and done >= n - 1)
   else
     return done >= n or (inLog ~= nil and inLog.complete and done >= n - 1)
   end
 end
 
+local function IsHard(o) return o.k == "a" or o.k == "t" or o.k == "c" or o.k == "o" or o.k == "l" end
+FP.IsHard = IsHard
+
+-- Required quest goals of a step: how many, and how many are done.
 function FP:StepCounts(step)
   local req, reqDone = 0, 0
-  for _, o in ipairs(step.q or {}) do
-    if not o.opt then
+  for idx, o in ipairs(step.q or {}) do
+    if not o.opt and IsHard(o) then
       req = req + 1
-      if self:ObjDone(o) then reqDone = reqDone + 1 end
+      if self:ObjDone(o, step, idx) then reqDone = reqDone + 1 end
     end
   end
   return req, reqDone
 end
 
+-- Place, trainer and flight-path goals still open on a step (they hold it until seen,
+-- or until you make progress on a later step).
+function FP:SoftOpen(step)
+  local n = 0
+  for idx, o in ipairs(step.q or {}) do
+    if not o.opt and FP.SOFT[o.k] and not self:ObjDone(o, step, idx) then
+      -- a "go here" point is passed once a later goal of the same step is done
+      local passed = false
+      if o.k == "g" then
+        for j = idx + 1, #step.q do
+          local p = step.q[j]
+          if IsHard(p) and self:ObjDone(p, step, j) then passed = true; break end
+        end
+      end
+      if not passed then n = n + 1 end
+    end
+  end
+  return n
+end
+
+local function AnyHardDone(self, step)
+  for idx, o in ipairs(step.q or {}) do
+    if IsHard(o) and o.k ~= "l" and self:ObjDone(o, step, idx) then return true end
+  end
+  return false
+end
+
+-- Status of every step: "done", "skipped", "na" (its condition was false when the route got there),
+-- "along" (done on the way, never the current step) or "open". The current step is the first open one.
 function FP:ComputeSteps()
   local route = self.plan and self.plan.route
   if not route then return end
-  local laterDone = false
+  local na = self.char.na
+  local raw = {}
+  local laterProgress = false
   for i = #route, 1, -1 do
     local s = route[i]
     local req, reqDone = self:StepCounts(s)
     local st
     if self.char.skip[s.key] then st = "skipped"
     elseif self.char.manual[s.key] then st = "done"
-    elseif req > 0 and reqDone == req then st = "done"
-    elseif req == 0 and laterDone then st = "done"
+    elseif reqDone == req then
+      local soft = self:SoftOpen(s)
+      local hasGoals = req > 0
+      if not hasGoals then
+        for _, o in ipairs(s.q or {}) do if FP.SOFT[o.k] and not o.opt then hasGoals = true end end
+      end
+      if soft == 0 and hasGoals then st = "done"
+      elseif laterProgress then st = "done"
+      else st = "open" end
     else st = "open" end
-    self.status[i] = st
-    if st == "done" then laterDone = true end
+    raw[i] = st
+    if not s.along and (st == "done" or AnyHardDone(self, s)) then laterProgress = true end
   end
   local cur
   for i = 1, #route do
-    if self.status[i] == "open" then cur = i; break end
+    local s = route[i]
+    local st = raw[i]
+    if st == "open" then
+      if na[s.key] then st = "na"
+      elseif s.along then st = "along"
+      elseif s.w then
+        if not cur and not self:StepApplies(s) then na[s.key] = true; st = "na"
+        elseif cur and not self:StepApplies(s) then st = "na" end
+      end
+    end
+    self.status[i] = st
+    if st == "open" and not cur then cur = i end
   end
   self.current = cur
 end
 
 function FP:ObjText(o)
-  local verb = (o.k == "a" and "Accept") or (o.k == "t" and "Turn in") or "Finish"
-  local nth = (o.n and o.n > 1) and (" (part " .. o.n .. ")") or ""
-  return verb .. " " .. o.q .. nth .. (o.opt and " |cff999999(optional)|r" or "")
+  local k = o.k
+  local name = o.q or o.txt or "?"
+  local text
+  if k == "a" then text = "Accept " .. name
+  elseif k == "t" then text = "Turn in " .. name
+  elseif k == "c" then text = "Finish " .. name
+  elseif k == "o" then text = (o.txt or "Objective") .. " |cff9d9d9d(" .. name .. ")|r"
+  else text = o.txt or name end
+  if o.n and o.n > 1 and not o.id then text = text .. " (part " .. o.n .. ")" end
+  if o.grp then text = text .. " |cffff8040(group)|r" end
+  if o.opt then text = text .. " |cff999999(optional)|r" end
+  return text
 end
 
 function FP:NextAction(step)
   if not step then return nil end
   for pass = 1, 2 do
-    for _, o in ipairs(step.q or {}) do
-      if (pass == 1) == (not o.opt) and not self:ObjDone(o) then return self:ObjText(o) end
+    for idx, o in ipairs(step.q or {}) do
+      if o.k ~= "i" and (pass == 1) == (not o.opt) and not self:ObjDone(o, step, idx) then
+        if not (o.k == "g" and self:SoftOpen(step) == 0) then return self:ObjText(o), o end
+      end
     end
   end
   return nil
@@ -278,12 +396,14 @@ function FP:Refresh(fromEvent)
   local before = self.current
   self:ScanLog()
   self:ComputeSteps()
+  self:FollowTarget()
   if fromEvent and before and self.current ~= before then
     local route = self.plan.route
     if self.current and self.current > before then
       self.view = nil
       local s = route[self.current]
-      self:Print(("Step done. Next: |cffffd100%s|r%s"):format(s.title, s.map and (" (" .. (FP.ZONE[s.map] or s.map) .. ")") or ""))
+      local zone = self:ZoneName(s.map)
+      self:Print(("Step done. Next: |cffffd100%s|r%s"):format(s.title, zone and (" (" .. zone .. ")") or ""))
       if PlaySound then pcall(PlaySound, 878) end -- quest log open sound
       if self.char.autoWay then self:SetWaypoint(s, true) end
     elseif not self.current then
@@ -291,6 +411,19 @@ function FP:Refresh(fromEvent)
     end
   end
   if self.UpdateUI then self:UpdateUI() end
+end
+
+-- Moves the waypoint along as goals of the current step get done (auto waypoints on).
+function FP:FollowTarget()
+  if not (self.char and self.char.autoWay and self.current and not self.view) then return end
+  local s = self.plan.route[self.current]
+  local m, x, y, label = self:StepTarget(s)
+  if not m then return end
+  local at = s.key .. label .. x .. y
+  if self.followAt ~= at then
+    self.followAt = at
+    if self.followReady then self:SetWaypoint(s, true) end
+  end
 end
 
 function FP:QueueRefresh()
@@ -328,7 +461,11 @@ end
 -- True if one of the step's required quests is in your quest log right now.
 function FP:StepInLog(step)
   for _, o in ipairs(step.q or {}) do
-    if not o.opt and self.log[Norm(o.q)] then return true end
+    if not o.opt and IsHard(o) and o.k ~= "l" then
+      if o.id and o.id ~= 0 then
+        if self.logById[o.id] then return true end
+      elseif o.q and self.log[Norm(o.q)] then return true end
+    end
   end
   return false
 end
@@ -345,12 +482,18 @@ function FP:CatchupPlan()
     local req, reqDone = self:StepCounts(s)
     if req > 0 and reqDone == req and (s.lvl or 0) <= maxLvl then anchor = i; break end
   end
+  -- A class route that starts at a level you've reached: the shared starting-zone steps before it are behind you.
+  local p = self.plan
+  if p.preludeEnd and p.preludeEnd > 0 and p.routeFrom and self:PlayerLevel() >= p.routeFrom - 1 then
+    if not anchor or anchor <= p.preludeEnd then anchor = p.preludeEnd + 1 end
+  end
   if not anchor then return nil end
   local keys, kept = {}, {}
+  local preludeAll = p.preludeEnd and p.routeFrom and self:PlayerLevel() >= p.routeFrom - 1
   for i = 1, anchor - 1 do
     local s = route[i]
-    if self.status[i] == "open" then
-      if self:StepInLog(s) then kept[#kept + 1] = s.key else keys[#keys + 1] = s.key end
+    if self.status[i] == "open" or self.status[i] == "along" then
+      if self:StepInLog(s) and not (preludeAll and i <= p.preludeEnd) then kept[#kept + 1] = tostring(s.num or s.key) else keys[#keys + 1] = s.key end
     end
   end
   return anchor, keys, kept
@@ -376,13 +519,16 @@ function FP:Catchup(arg)
   end
   local a = route[anchor]
   if #keys == 0 then
-    self:Print(("You're already caught up to step %s (%s)."):format(a.key, a.title))
+    self:Print(("You're already caught up to step %s (%s)."):format(a.num or a.key, a.title))
     if #kept > 0 then self:Print("Still in your quest log, so kept: steps " .. table.concat(kept, ", ") .. ".") end
     return
   end
-  local list = table.concat(keys, ", ")
+  local nums = {}
+  for _, k in ipairs(keys) do local i = self:StepIndex(k); nums[#nums + 1] = tostring(i and route[i].num or k) end
+  if #nums > 40 then nums = { nums[1] .. "-" .. nums[#nums] } end
+  local list = table.concat(nums, ", ")
   if arg ~= "confirm" then
-    self:Print(("Your furthest finished step is %s (%s). Catchup would skip %d unfinished steps before it: %s."):format(a.key, a.title, #keys, list))
+    self:Print(("Your furthest finished step is %s (%s). Catchup would skip %d unfinished steps before it: %s."):format(a.num or a.key, a.title, #keys, list))
     if #kept > 0 then self:Print("Kept because their quests are in your log: steps " .. table.concat(kept, ", ") .. ".") end
     self:Print("Type |cffffd100/fp catchup confirm|r to do it, or /fp catchup undo afterwards to reverse it.")
     return
@@ -391,9 +537,9 @@ function FP:Catchup(arg)
   self.char.lastCatchup = keys
   self.view = nil
   self:Refresh(false)
-  self:Print(("Skipped %d steps before step %s: %s. They stay in the Route tab; Skip again on any of them to bring it back."):format(#keys, a.key, list))
+  self:Print(("Skipped %d steps before step %s: %s. They stay in the Route tab; Skip again on any of them to bring it back."):format(#keys, a.num or a.key, list))
   local cur = self.current and route[self.current]
-  if cur then self:Print(("You're now on step %s: %s."):format(cur.key, cur.title)) end
+  if cur then self:Print(("You're now on step %s: %s."):format(cur.num or cur.key, cur.title)) end
 end
 
 function FP:Browse(delta)
@@ -409,7 +555,7 @@ function FP:GotoKey(key)
   local route = self.plan and self.plan.route
   if not route then return end
   for i, s in ipairs(route) do
-    if s.key == key then
+    if s.key == key or tostring(s.num) == key then
       self.view = (i ~= self.current) and i or nil
       if self.UpdateUI then self:UpdateUI() end
       return true
@@ -421,20 +567,49 @@ end
 ------------------------------------------------------------------------
 -- Waypoints: TomTom if installed, else the map's own pin, else chat
 ------------------------------------------------------------------------
+function FP:MapID(map)
+  if type(map) == "number" then return map end
+  return map and FP.MAP[map]
+end
+
+function FP:ZoneName(map)
+  if not map then return nil end
+  if type(map) == "number" then
+    if FP.MAPNAME[map] then return FP.MAPNAME[map] end
+    if C_Map and C_Map.GetMapInfo then
+      local ok, info = pcall(C_Map.GetMapInfo, map)
+      if ok and info and info.name then return info.name end
+    end
+    return "map " .. map
+  end
+  return FP.ZONE[map] or map
+end
+
+-- Where the step sends you now: the first unfinished goal that has a place, else the step's own spot.
+function FP:StepTarget(step)
+  for idx, o in ipairs(step.q or {}) do
+    if o.m and o.x and o.k ~= "i" and not self:ObjDone(o, step, idx) then
+      return o.m, o.x, o.y, (o.k == "g" and o.txt) or step.title
+    end
+  end
+  return step.map, step.x, step.y, step.title
+end
+
 function FP:SetWaypoint(step, quiet)
   if not step then return end
-  if not (step.map and step.x and step.y) then
+  local map, sx, sy, label = self:StepTarget(step)
+  if not (map and sx and sy) then
     if not quiet then self:Print("This step has no coordinates. Questie's map markers show the quest givers.") end
     return
   end
-  local mapID = FP.MAP[step.map]
-  local zone = FP.ZONE[step.map] or step.map
-  local x, y = step.x / 100, step.y / 100
+  local mapID = self:MapID(map)
+  local zone = self:ZoneName(map)
+  local x, y = sx / 100, sy / 100
   if mapID and TomTom and TomTom.AddWaypoint then
     if self.tomtomUid and TomTom.RemoveWaypoint then pcall(TomTom.RemoveWaypoint, TomTom, self.tomtomUid) end
     local ok, uid = pcall(TomTom.AddWaypoint, TomTom, mapID, x, y,
-      { title = step.title, persistent = false, minimap = true, world = true, from = "Forever Planner" })
-    if ok then self.tomtomUid = uid; return true end
+      { title = label, persistent = false, minimap = true, world = true, from = "Forever Planner" })
+    if ok then self.tomtomUid = uid; self.wayAt = step.key .. label; return true end
   end
   if mapID and C_Map and C_Map.SetUserWaypoint and UiMapPoint and UiMapPoint.CreateFromCoordinates then
     local ok = pcall(function()
@@ -442,11 +617,12 @@ function FP:SetWaypoint(step, quiet)
       if C_SuperTrack and C_SuperTrack.SetSuperTrackedUserWaypoint then C_SuperTrack.SetSuperTrackedUserWaypoint(true) end
     end)
     if ok then
-      if not quiet then self:Print(("Map pin set: %s, %s %d, %d."):format(step.title, zone, step.x, step.y)) end
+      self.wayAt = step.key .. label
+      if not quiet then self:Print(("Map pin set: %s, %s %.1f, %.1f."):format(label, zone, sx, sy)) end
       return true
     end
   end
-  if not quiet then self:Print(("%s: %s %d, %d"):format(step.title, zone, step.x, step.y)) end
+  if not quiet then self:Print(("%s: %s %.1f, %.1f"):format(label, zone, sx, sy)) end
 end
 
 ------------------------------------------------------------------------
@@ -645,7 +821,7 @@ end
 FP.SLOT_IDS = {
   Head = { 1 }, Neck = { 2 }, Shoulder = { 3 }, Back = { 15 }, Chest = { 5 }, Wrist = { 9 },
   Hands = { 10 }, Waist = { 6 }, Legs = { 7 }, Feet = { 8 }, Ring = { 11, 12 }, Trinket = { 13, 14 },
-  Weapon = { 16, 17 }, Idol = { 18 },
+  Weapon = { 16, 17 }, MainHand = { 16 }, OffHand = { 17 }, Idol = { 18 }, Wand = { 18 }, Ranged = { 18 },
 }
 
 function FP:ScanItems()
@@ -883,9 +1059,19 @@ local function InitSaved()
   c.doneExtra = c.doneExtra or {}
   c.manual = c.manual or {}
   c.skip = c.skip or {}
+  c.ticks = c.ticks or {}   -- place/trainer goals seen: "stepkey#n" -> true
+  c.na = c.na or {}         -- steps whose condition didn't apply when the route reached them
   if c.autoWay == nil then c.autoWay = true end
   if c.trackerShown == nil then c.trackerShown = true end
   FP.db, FP.char = ForeverPlannerDB, c
+end
+
+local function StartLiveTicker()
+  if FP.liveTicker or not (C_Timer and C_Timer.NewTicker) then return end
+  FP.liveTicker = C_Timer.NewTicker(1, function()
+    local s = FP.plan and FP.current and FP.plan.route[FP.current]
+    if s and FP:HasLiveGoals(s) then pcall(FP.CheckLive, FP) end
+  end)
 end
 
 ev:SetScript("OnEvent", function(_, event, ...)
@@ -894,17 +1080,22 @@ ev:SetScript("OnEvent", function(_, event, ...)
     if name == "ForeverPlanner" then InitSaved() end
   elseif event == "PLAYER_LOGIN" then
     if not FP.char then InitSaved() end
-    local _, class = UnitClass("player")
-    FP.class = class
-    FP.plan = FP.plans[class]
+    FP:ReadIdentity()
+    FP.className = UnitClass and UnitClass("player")
+    if FP.char.setup == nil then FP.char.needCatchup = true end
+    FP:BuildPlan()
+    FP:FreeOtherFaction()
     FP:Recount()
     FP:ScanItems()
     FP:ScanTalents()
     if FP.BuildUI then FP:BuildUI() end
     FP:Refresh(false)
+    FP.followReady = true
+    StartLiveTicker()
     if FP.plan then
-      FP:Print(("Plan loaded: %s. /fp opens it."):format(FP.plan.name))
+      FP:Print(("Plan loaded: %s, %d route steps. /fp opens it."):format(FP.plan.name, #FP.plan.route))
     end
+    if FP.char.setup == nil and FP.ShowSetup then FP:ShowSetup() end
     local last = FP.db.lastVersion
     if last ~= FP.version then
       local from = last or (next(FP.char.doneIds) and "an earlier version")
@@ -917,7 +1108,11 @@ ev:SetScript("OnEvent", function(_, event, ...)
   elseif event == "PLAYER_ENTERING_WORLD" then
     if not FP.historyDone and FP.plan then
       FP.historyDone = true
-      local function run() FP:ImportHistory(true); FP:Refresh(false) end
+      local function run()
+        FP:ImportHistory(true)
+        FP:Refresh(false)
+        if FP.char.needCatchup and FP.char.setup then FP:AutoCatchup() end
+      end
       if C_Timer and C_Timer.After then C_Timer.After(6, run) else run() end
     end
   elseif event == "QUEST_COMPLETE" then
@@ -926,17 +1121,16 @@ ev:SetScript("OnEvent", function(_, event, ...)
   elseif event == "QUEST_TURNED_IN" then
     local id = ...
     if id and FP.char then
-      local title = FP.idTitle[id] or FP:TitleForID(id) or FP.lastCompleteTitle
-      if title then
-        FP.char.doneIds[id] = title
-        FP:Recount()
-      end
+      local title = FP.idTitle[id] or FP:TitleForID(id) or FP.QT[id] or FP.lastCompleteTitle
+      FP.char.doneIds[id] = title or true
+      FP:Recount()
     end
     FP:QueueRefresh()
   elseif event == "QUEST_ACCEPTED" or event == "QUEST_LOG_UPDATE" or event == "QUEST_REMOVED" then
     FP:QueueRefresh()
   elseif event == "PLAYER_LEVEL_UP" then
     local level = ...
+    FP.lastLevel = FP:Readable(level) or FP.lastLevel
     FP:OnLevelUp(level)
     FP:QueueRefresh()
   elseif event == "CHARACTER_POINTS_CHANGED" or event == "PLAYER_TALENT_UPDATE" or event == "TRAIT_CONFIG_UPDATED"
@@ -946,14 +1140,27 @@ ev:SetScript("OnEvent", function(_, event, ...)
     FP:QueueRefresh()
   elseif event == "PLAYER_EQUIPMENT_CHANGED" or event == "BAG_UPDATE_DELAYED" or event == "UNIT_INVENTORY_CHANGED" then
     FP:ScanItems()
+    if FP.plan then pcall(FP.CheckLive, FP) end
     if FP.UpdateUI then FP:UpdateUI() end
+  elseif event == "TRAINER_SHOW" then
+    FP:OnNpcWindow("trainer")
+  elseif event == "TAXIMAP_OPENED" then
+    FP:OnNpcWindow("taxi")
+  elseif event == "GOSSIP_SHOW" or event == "QUEST_GREETING" or event == "QUEST_DETAIL" or event == "MERCHANT_SHOW"
+      or event == "QUEST_PROGRESS" then
+    FP:OnNpcWindow("talk")
+  elseif event == "ZONE_CHANGED" or event == "ZONE_CHANGED_NEW_AREA" or event == "ZONE_CHANGED_INDOORS"
+      or event == "HEARTHSTONE_BOUND" or event == "PLAYER_MONEY" then
+    if FP.plan then pcall(FP.CheckLive, FP) end
   end
 end)
 
 for _, e in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "QUEST_COMPLETE", "QUEST_TURNED_IN",
   "QUEST_ACCEPTED", "QUEST_LOG_UPDATE", "QUEST_REMOVED", "PLAYER_LEVEL_UP", "CHARACTER_POINTS_CHANGED",
   "PLAYER_TALENT_UPDATE", "PLAYER_EQUIPMENT_CHANGED", "BAG_UPDATE_DELAYED",
-  "TRAIT_CONFIG_UPDATED", "TRAIT_NODE_CHANGED", "TRAIT_TREE_CURRENCY_INFO_UPDATED" }) do
+  "TRAIT_CONFIG_UPDATED", "TRAIT_NODE_CHANGED", "TRAIT_TREE_CURRENCY_INFO_UPDATED", "TRAINER_SHOW", "TAXIMAP_OPENED",
+  "GOSSIP_SHOW", "QUEST_GREETING", "QUEST_DETAIL", "QUEST_PROGRESS", "MERCHANT_SHOW", "ZONE_CHANGED",
+  "ZONE_CHANGED_NEW_AREA", "ZONE_CHANGED_INDOORS", "HEARTHSTONE_BOUND", "PLAYER_MONEY" }) do
   pcall(ev.RegisterEvent, ev, e) -- an event this client doesn't have is skipped, not an error
 end
 
@@ -985,6 +1192,8 @@ local HELP = {
   "/fp lock - lock or unlock the tracker position",
   "/fp talentglow - turn the talent screen highlight on or off",
   "/fp talentdebug - show what the addon sees on the talent screen",
+  "/fp setup - choose your spec and options again",
+  "/fp side - class quests ready for your level; /fp side <n> adds one to your route",
   "/fp reset confirm - clear this character's route progress",
 }
 
@@ -994,7 +1203,7 @@ SlashCmdList["FOREVERPLANNER"] = function(msg)
   msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
   local cmd, arg = msg:match("^(%S*)%s*(.-)$")
   if not FP.plan and cmd ~= "help" then
-    FP:Print(("No plan for your class (%s) yet. Plans are made in your project's class chat."):format(tostring(FP.class)))
+    FP:Print("Your plan isn't ready yet; try again in a moment.")
     return
   end
   if cmd == "" then FP:ToggleMain()
@@ -1019,20 +1228,38 @@ SlashCmdList["FOREVERPLANNER"] = function(msg)
     FP.char.locked = not FP.char.locked
     FP:Print("Tracker " .. (FP.char.locked and "locked." or "unlocked: drag it to move."))
   elseif cmd == "sync" then FP:ImportHistory(true); FP:Refresh(false)
+  elseif cmd == "setup" then if FP.ShowSetup then FP:ShowSetup() end
+  elseif cmd == "side" then
+    local list = FP:SideReady()
+    local n = tonumber(arg)
+    if n and list[n] then FP:StartSide(list[n].id); return end
+    if #list == 0 then FP:Print("No class quests waiting for your level."); return end
+    for k, side in ipairs(list) do
+      FP:Print(("%d. %s (levels %d-%d): %s"):format(k, side.title, side.min, side.max, side.why or ""))
+    end
+    FP:Print("Type /fp side <number> to add one before your current step.")
   elseif cmd == "catchup" then FP:Catchup(arg)
   elseif cmd == "check" then
     local i = FP:ViewIndex()
     local s = i and FP.plan.route[i]
     if not s then FP:Print("No step shown."); return end
-    FP:Print(("Step %s: %s"):format(s.key, s.title))
-    for _, o in ipairs(s.q or {}) do
-      local k = Norm(o.q)
-      local inLog = FP.log[k]
-      FP:Print(("  %s %s - in log: %s, turned in: %d"):format(FP:ObjDone(o) and "|cff00ff00done|r" or "|cffff8000open|r",
-        FP:ObjText(o), inLog and (inLog.complete and "yes, complete" or "yes") or "no", FP.doneCount[k] or 0))
+    FP:Print(("Step %s: %s (%s)"):format(s.num or s.key, s.title, FP.status[i] or "?"))
+    for idx, o in ipairs(s.q or {}) do
+      local state = FP:ObjDone(o, s, idx) and "|cff00ff00done|r" or "|cffff8000open|r"
+      local extra = ""
+      if o.id and o.id ~= 0 and (o.k == "a" or o.k == "t" or o.k == "c" or o.k == "o") then
+        local L = FP.logById[o.id]
+        extra = (" - quest %d, in log: %s, turned in: %s"):format(o.id, L and (L.complete and "yes, complete" or "yes") or "no",
+          FP.char.doneIds[o.id] and "yes" or "no")
+      elseif o.q and not o.id then
+        local k = Norm(o.q)
+        local inLog = FP.log[k]
+        extra = (" - in log: %s, turned in: %d"):format(inLog and (inLog.complete and "yes, complete" or "yes") or "no", FP.doneCount[k] or 0)
+      end
+      FP:Print(("  %s %s%s"):format(state, FP:ObjText(o), extra))
     end
   elseif cmd == "reset" and arg == "confirm" then
-    wipe(FP.char.manual); wipe(FP.char.skip)
+    wipe(FP.char.manual); wipe(FP.char.skip); wipe(FP.char.ticks); wipe(FP.char.na)
     FP.view = nil
     FP:Refresh(false)
     FP:Print("Route progress cleared. Quest history still counts.")

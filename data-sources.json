@@ -1,10 +1,30 @@
 {
   "Druid": {
-    "dataFile": "ForeverPlanner/Data/Druid.lua",
+    "dataFile": "ForeverPlanner/Data/Classes/Druid.lua",
     "routeDoc": "https://claude.ai/artifact/KmG3TGZi9Lv2GUFknRDd45",
     "routeDocId": "97f27ded-3db4-4ca2-9054-ee33bc937702",
     "routeDocRev": 45,
     "classBrief": "claude/classes/druid.md",
+    "builtOn": "2026-11-13"
+  },
+  "Polestar": {
+    "repo": "https://github.com/fitzforge/polestar",
+    "license": "GPL-3.0-only",
+    "version": "0.3.7.2",
+    "commit": "19bd636e7d6f33231770f6029c76d2d4dfc63798",
+    "files": [
+      "ForeverPlanner/Data/Routes/Horde.lua",
+      "ForeverPlanner/Data/Routes/Alliance.lua",
+      "ForeverPlanner/Data/Routes/ClassQuests.lua",
+      "ForeverPlanner/Data/Talents.lua"
+    ],
+    "regenerate": "python tools/convert_polestar.py <path to a polestar checkout>"
+  },
+  "Warlock": {
+    "dataFile": "ForeverPlanner/Data/Classes/Warlock.lua",
+    "classBrief": "claude/classes/warlock.md",
+    "routeDoc": null,
+    "note": "Route and talents come from the shared Polestar data; this file holds macros, trainer notes and gear.",
     "builtOn": "2026-11-13"
   }
 }

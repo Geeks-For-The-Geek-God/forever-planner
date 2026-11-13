@@ -1,12 +1,15 @@
+import os, sys
 import sys
 from lupa.lua51 import LuaRuntime
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness
 import os
 S=os.path.dirname(os.path.abspath(__file__)); A=os.path.join(S, "..", "ForeverPlanner") + "/"
 lua=LuaRuntime(unpack_returned_tuples=True); G=lua.globals()
 def load(p):
     lua.eval("function(src,n) local f,e=loadstring(src,n); if not f then error(e) end; return f end")(open(p).read(),p)()
 load(S+"/wowstub.lua")
-for f in ["Core.lua","Data/Druid.lua","UI.lua"]: load(A+f)
+for f in harness.toc_files(routes=False): load(A+f)
 fails=[]
 def check(c,m):
     print(("PASS " if c else "FAIL ")+m)

@@ -1,5 +1,7 @@
 import os, sys
 from lupa.lua51 import LuaRuntime
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness
 S = os.path.dirname(os.path.abspath(__file__)); A = os.path.join(S, "..", "ForeverPlanner") + "/"
 lua = LuaRuntime(unpack_returned_tuples=True); G = lua.globals()
 def load(p):
@@ -41,7 +43,7 @@ mt.GetName = function(self) return self.name end
 SELECTED = 1
 function PanelTemplates_GetSelectedTab() return SELECTED end
 """)
-for f in ["Core.lua", "Data/Druid.lua", "UI.lua"]: load(A + f)
+for f in harness.toc_files(routes=False): load(A + f)
 lua.execute("""
 FireEvent("ADDON_LOADED","ForeverPlanner"); FireEvent("PLAYER_LOGIN")
 -- Classic's Blizzard talent screen: buttons TalentFrameTalent1..n for the shown tree, plus 3 tabs

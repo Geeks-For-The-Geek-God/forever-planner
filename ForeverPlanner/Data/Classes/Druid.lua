@@ -14,6 +14,8 @@ local plan = {
   class = "DRUID",
   routeName = "Feral Levelling Route 20-60 (Horde)",
   routeUrl = "https://claude.ai/artifact/KmG3TGZi9Lv2GUFknRDd45",
+  spec = "feral",          -- the Feral build; other specs use the shared levelling route and talent builds
+  routeFromLevel = 21,     -- levels 1-20 follow the shared route from your starting zone, then this route takes over
 }
 
 ------------------------------------------------------------------------

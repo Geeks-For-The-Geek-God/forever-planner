@@ -54,7 +54,15 @@ function FlushTimers() local t = TIMERS; TIMERS = {}; for _, fn in ipairs(t) do 
 -- Player
 PLAYER_LEVEL = 21
 function UnitLevel() return PLAYER_LEVEL end
-function UnitClass() return "Druid", "DRUID" end
+PLAYER_CLASS, PLAYER_CLASS_NAME = "DRUID", "Druid"
+PLAYER_RACE, PLAYER_FACTION = "Tauren", "Horde"
+function UnitClass() return PLAYER_CLASS_NAME, PLAYER_CLASS end
+function UnitRace() return PLAYER_RACE, PLAYER_RACE end
+function UnitFactionGroup() return PLAYER_FACTION, PLAYER_FACTION end
+function UnitName() return "Tester" end
+PLAYER_XP, PLAYER_XPMAX = 0, 1000
+function UnitXP() return PLAYER_XP end
+function UnitXPMax() return PLAYER_XPMAX end
 TALENT_POINTS = 1
 function UnitCharacterPoints() return TALENT_POINTS end
 InCombatLockdown = function() return false end

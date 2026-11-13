@@ -1,12 +1,26 @@
 ## Interface: 16001
 ## Title: Forever Planner
-## Notes: Follows your own levelling route step by step, with talents, macros and gear for your class plan.
-## Author: Lee (built with Claude)
-## Version: 0.4.3
+## Notes: Levelling route, talents, macros and gear for every character, step by step from your first login.
+## Author: The Forever Planner authors
+## Version: 0.5.0
 ## SavedVariables: ForeverPlannerDB
 ## SavedVariablesPerCharacter: ForeverPlannerChar
 ## OptionalDeps: Questie, TomTom
+## X-License: GPL-3.0-only
 
 Core.lua
-Data\Druid.lua
+Route.lua
+Data\Talents.lua
+Data\Routes\Horde.lua
+Data\Routes\Alliance.lua
+Data\Routes\ClassQuests.lua
+Data\Classes\Druid.lua
+Data\Classes\Hunter.lua
+Data\Classes\Mage.lua
+Data\Classes\Paladin.lua
+Data\Classes\Priest.lua
+Data\Classes\Rogue.lua
+Data\Classes\Shaman.lua
+Data\Classes\Warlock.lua
+Data\Classes\Warrior.lua
 UI.lua

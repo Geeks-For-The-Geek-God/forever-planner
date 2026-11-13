@@ -84,6 +84,30 @@ local function BuildTracker()
   tracker.talent:SetWidth(WIDTH - 16)
   tracker.talent:SetJustifyH("LEFT")
 
+  -- Class quest ready: left-click adds it to the route, right-click hides it.
+  local side = CreateFrame("Button", nil, tracker)
+  side:SetSize(WIDTH - 16, 14)
+  side:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  side.text = side:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  side.text:SetPoint("TOPLEFT")
+  side.text:SetWidth(WIDTH - 16)
+  side.text:SetJustifyH("LEFT")
+  side:SetScript("OnClick", function(self, btn)
+    if not self.sideId then return end
+    if btn == "RightButton" then FP:DismissSide(self.sideId) else FP:StartSide(self.sideId) end
+  end)
+  side:SetScript("OnEnter", function(self)
+    if not (GameTooltip and self.side) then return end
+    GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+    GameTooltip:AddLine(self.side.title)
+    if self.side.why then GameTooltip:AddLine(self.side.why, 1, 1, 1, true) end
+    GameTooltip:AddLine("Left-click: add it to your route before the current step.", 0.6, 0.8, 1, true)
+    GameTooltip:AddLine("Right-click: hide this suggestion.", 0.6, 0.6, 0.6, true)
+    GameTooltip:Show()
+  end)
+  side:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+  tracker.side = side
+
   local bar = CreateFrame("Frame", nil, tracker)
   bar:SetSize(WIDTH - 12, 20)
   bar:SetPoint("BOTTOMLEFT", 6, 5)
@@ -154,36 +178,77 @@ function FP:UpdateTracker()
   local st = self.status[i]
   local viewing = (self.view ~= nil and self.view ~= self.current)
   local tag = viewing and (GREY .. " (browsing; Now to return)|r") or ""
-  if st == "done" then tag = tag .. " " .. OK elseif st == "skipped" then tag = tag .. GREY .. " skipped|r" end
-  local zone = s.map and (FP.ZONE[s.map] or s.map) or ""
-  local coord = (s.x and s.y) and (" %d, %d"):format(s.x, s.y) or ""
-  tracker.head:SetText(("Step %s/%d  %s%s|r%s  lvl %d%s"):format(s.key, #route, WHITE, zone, coord, s.lvl or 0, tag))
+  if st == "done" then tag = tag .. " " .. OK elseif st == "skipped" then tag = tag .. GREY .. " skipped|r"
+  elseif st == "na" then tag = tag .. GREY .. " not needed|r" elseif st == "along" then tag = tag .. GREY .. " on the way|r" end
+  local map, tx, ty = self:StepTarget(s)
+  local zone = self:ZoneName(map) or ""
+  local coord = (tx and ty) and (" %.0f, %.0f"):format(tx, ty) or ""
+  tracker.head:SetText(("Step %s/%d  %s%s|r%s  lvl %d%s"):format(s.num or s.key, #route, WHITE, zone, coord, s.lvl or 0, tag))
   place(tracker.head)
 
   tracker.title:SetText(s.title)
   place(tracker.title, 3)
 
-  local n = 0
-  for _, o in ipairs(s.q or {}) do
+  -- Goals: all of them, or only the open ones when the step is long.
+  local goals = s.q or {}
+  local hideDone = #goals > 9
+  local n, hidden = 0, 0
+  for idx, o in ipairs(goals) do
+    local done = self:ObjDone(o, s, idx)
+    if o.k == "i" then
+      if o.txt and n < 14 then
+        n = n + 1
+        local fs = Line(n)
+        fs:SetText(GREY .. "  " .. o.txt .. "|r")
+        place(fs, 2)
+      end
+    elseif done and hideDone then
+      hidden = hidden + 1
+    elseif n < 14 then
+      n = n + 1
+      local fs = Line(n)
+      local text = self:ObjText(o)
+      if done then
+        fs:SetText(OK .. " " .. GREY .. text .. "|r")
+      else
+        local inLog = (o.id and o.id ~= 0) and self.logById[o.id] or (o.q and not o.id and self.log[FP.Norm(o.q)])
+        local icon = (inLog and inLog.complete) and WAIT or DOT
+        fs:SetText(icon .. " " .. text)
+      end
+      place(fs, 2)
+    end
+  end
+  if hidden > 0 then
     n = n + 1
     local fs = Line(n)
-    local done = self:ObjDone(o)
-    local text = self:ObjText(o)
-    if done then
-      fs:SetText(OK .. " " .. GREY .. text .. "|r")
-    else
-      local inLog = self.log[FP.Norm(o.q)]
-      local icon = (inLog and inLog.complete) and WAIT or DOT
-      fs:SetText(icon .. " " .. text)
-    end
+    fs:SetText(GREY .. ("  (%d done goals hidden)"):format(hidden) .. "|r")
     place(fs, 2)
   end
 
-  local nextText = self:NextAction(s)
+  -- Goals of "on the way" steps you are passing through.
+  if not viewing and self.current then
+    local shown = 0
+    for j = self.current - 1, math.max(1, self.current - 25), -1 do
+      local a = route[j]
+      if self.status[j] == "along" then
+        for idx, o in ipairs(a.q) do
+          if shown < 3 and o.k ~= "i" and not o.opt and not self:ObjDone(o, a, idx) then
+            shown = shown + 1
+            n = n + 1
+            local fs = Line(n)
+            fs:SetText("|cff66ccffOn the way:|r " .. self:ObjText(o))
+            place(fs, 2)
+          end
+        end
+      end
+    end
+  end
+
+  local nextText, nextGoal = self:NextAction(s)
   if nextText and not viewing then
     tracker.nextLine:SetText("Next: " .. WHITE .. nextText .. "|r")
     place(tracker.nextLine, 5)
-  elseif (s.q == nil or #s.q == 0) and not viewing and st == "open" then
+  elseif (s.q == nil or #s.q == 0 or st == "open") and not viewing and st == "open" then
     tracker.nextLine:SetText("Next: " .. WHITE .. "do this, then press Done|r")
     place(tracker.nextLine, 5)
   else
@@ -204,8 +269,12 @@ function FP:UpdateTracker()
     tracker.gear:Hide()
   end
 
-  if s.note and s.note ~= "" then
-    tracker.note:SetText(s.note)
+  local note = s.note
+  if nextGoal and nextGoal.note and not viewing then
+    note = (note and note ~= "") and (nextGoal.note .. "\n" .. note) or nextGoal.note
+  end
+  if note and note ~= "" then
+    tracker.note:SetText(note)
     place(tracker.note, 4)
   else
     tracker.note:Hide()
@@ -218,6 +287,20 @@ function FP:UpdateTracker()
     place(tracker.talent, 5)
   else
     tracker.talent:Hide()
+  end
+
+  local ready = (not viewing) and self:SideReady() or {}
+  local sd = ready[1]
+  if sd then
+    tracker.side.sideId, tracker.side.side = sd.id, sd
+    tracker.side.text:SetText(("|cff66ccffClass quest ready:|r %s%s|r %s(click to add)|r"):format(WHITE, sd.title, GREY))
+    tracker.side:SetHeight(tracker.side.text:GetStringHeight() + 2)
+    tracker.side:ClearAllPoints()
+    tracker.side:SetPoint("TOPLEFT", 8, y - 5)
+    tracker.side:Show()
+    y = y - 5 - tracker.side:GetHeight()
+  else
+    tracker.side:Hide()
   end
 
   tracker:SetHeight(-y + 32)
@@ -285,11 +368,12 @@ local function RouteList()
     end
     local st = FP.status[i]
     local icon = (st == "done" and OK) or (st == "skipped" and NO) or (i == FP.current and WAIT) or DOT
+    if st == "na" or st == "along" then icon = GREY .. (st == "na" and "n/a" or "way") .. "|r" end
     local req, reqDone = FP:StepCounts(s)
     local count = req > 0 and ("  " .. GREY .. reqDone .. "/" .. req .. "|r") or ""
     local name = (i == vi) and (GOLD .. "> " .. s.title .. "|r") or ((st == "open") and s.title or (GREY .. s.title .. "|r"))
     list[#list + 1] = {
-      text = ("%s  %s. %s  %s(%d)|r%s"):format(icon, s.key, name, GREY, s.lvl or 0, count),
+      text = ("%s  %s. %s  %s(%d)|r%s"):format(icon, s.num or s.key, name, GREY, s.lvl or 0, count),
       focus = (i == vi),
       onClick = function() FP.view = (i ~= FP.current) and i or nil; FP:UpdateUI() end,
     }
@@ -317,6 +401,9 @@ local function TalentList()
       local icon = taken and OK or ((level == nextLvl) and WAIT or DOT)
       local t = (level == nextLvl) and (GOLD .. text .. "|r") or (taken and (GREY .. text .. "|r") or text)
       list[#list + 1] = { text = ("%s  %d: %s"):format(icon, level, t), focus = (level == nextLvl) }
+      if p.talentNotes and p.talentNotes[level] then
+        list[#list + 1] = { text = "      " .. GREY .. p.talentNotes[level] .. "|r" }
+      end
     end
   end
   if p.training then
@@ -334,6 +421,10 @@ end
 local function MacroList()
   local list = { { header = true, text = GOLD .. "Macros for your level|r" },
     { text = "Click a macro to show its text below. Write saves it into your character macros (out of combat); an existing macro of the same name is updated in place, so it stays on your bars." } }
+  if #FP.plan.macros == 0 then
+    list[#list + 1] = { text = GREY .. "No macros for this spec yet. They come from your class chat in the WoW Forever project, which publishes them with the next update.|r" }
+  end
+  if FP.plan.macroNote then list[#list + 1] = { text = FP.plan.macroNote } end
   local current = {}
   for _, m in ipairs(FP:CurrentMacros()) do current[m] = true end
   for _, m in ipairs(FP.plan.macros) do
@@ -362,11 +453,17 @@ local function GearList()
     local st = FP.status[i]
     local s = p.route[i]
     local passed = (st == "done" or st == "skipped") and (GREY .. ", step passed: rerun it or check the AH|r") or ""
-    return ("  %s[step %s, lvl %d]|r%s"):format(GOLD, key, s.lvl or 0, passed)
+    return ("  %s[step %s, lvl %d]|r%s"):format(GOLD, s.num or key, s.lvl or 0, passed)
   end
   local function goStep(key)
     if not FP:StepIndex(key) then return nil end
     return function() FP:ShowStep(key, true) end
+  end
+
+  if not p.gear or #p.gear == 0 then
+    list[#list + 1] = { header = true, text = GOLD .. "Gear|r" }
+    list[#list + 1] = { text = GREY .. "No gear plan for this spec yet. Gear lists come from your class chat in the WoW Forever project and arrive with the next update.|r" }
+    return list
   end
 
   -- 1. What you still need, in route order
@@ -820,3 +917,111 @@ watcher:SetScript("OnEvent", function()
   rescanAt = (GetTime and GetTime() or 0) + 1
 end)
 FP.talentWatcher = watcher
+
+------------------------------------------------------------------------
+-- One-time setup window (first login of each character; /fp setup reopens it)
+------------------------------------------------------------------------
+local setup
+local function BuildSetup()
+  setup = CreateFrame("Frame", "ForeverPlannerSetup", UIParent)
+  setup:SetSize(470, 300)
+  setup:SetFrameStrata("DIALOG")
+  setup:SetPoint("CENTER", 0, 60)
+  Bg(setup, 0.92)
+  setup:SetMovable(true)
+  setup:EnableMouse(true)
+  setup:RegisterForDrag("LeftButton")
+  setup:SetScript("OnDragStart", setup.StartMoving)
+  setup:SetScript("OnDragStop", setup.StopMovingOrSizing)
+  setup:SetClampedToScreen(true)
+  setup.title = setup:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  setup.title:SetPoint("TOPLEFT", 14, -12)
+  setup.intro = setup:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  setup.intro:SetPoint("TOPLEFT", 14, -38)
+  setup.intro:SetWidth(442)
+  setup.intro:SetJustifyH("LEFT")
+  setup.rows = {}
+  setup.group = CreateFrame("CheckButton", nil, setup, "UICheckButtonTemplate")
+  setup.group:SetSize(24, 24)
+  setup.group.label = setup:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  setup.group.label:SetPoint("LEFT", setup.group, "RIGHT", 2, 0)
+  setup.group.label:SetWidth(400)
+  setup.group.label:SetJustifyH("LEFT")
+  setup.group.label:SetText("Include group quests (elites that need 2 or more players). Off: the route skips them.")
+  setup.start = Button(setup, "Start", 120, 24, function()
+    setup.applied = true
+    FP:ApplySetup(setup.choice, setup.group:GetChecked())
+    setup:Hide()
+  end)
+  setup.start:SetPoint("BOTTOMRIGHT", -14, 12)
+  setup.foot = setup:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  setup.foot:SetPoint("BOTTOMLEFT", 14, 18)
+  setup.foot:SetWidth(300)
+  setup.foot:SetJustifyH("LEFT")
+  setup.foot:SetText("Change this any time with /fp setup.")
+  local close = CreateFrame("Button", nil, setup, "UIPanelCloseButton")
+  close:SetPoint("TOPRIGHT", 2, 2)
+  setup:SetScript("OnHide", function()
+    -- Closed without Start on the first login: keep the recommended choices.
+    if not setup.applied and FP.char and FP.char.setup == nil then FP:ApplySetup(setup.choice, setup.group:GetChecked()) end
+  end)
+  setup:Hide()
+end
+
+local function SetupRow(i)
+  local r = setup.rows[i]
+  if not r then
+    r = CreateFrame("CheckButton", nil, setup, "UICheckButtonTemplate")
+    r:SetSize(24, 24)
+    r.label = setup:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    r.label:SetPoint("TOPLEFT", r, "TOPRIGHT", 2, -4)
+    r.label:SetWidth(410)
+    r.label:SetJustifyH("LEFT")
+    r.desc = setup:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    r.desc:SetPoint("TOPLEFT", r.label, "BOTTOMLEFT", 0, -2)
+    r.desc:SetWidth(410)
+    r.desc:SetJustifyH("LEFT")
+    r:SetScript("OnClick", function(self)
+      setup.choice = self.key
+      for _, other in ipairs(setup.rows) do other:SetChecked(other.key == self.key) end
+    end)
+    setup.rows[i] = r
+  end
+  return r
+end
+
+function FP:ShowSetup()
+  if not setup then BuildSetup() end
+  setup.applied = false
+  local name = (UnitName and self:Readable(UnitName("player"))) or "you"
+  local race = UnitRace and select(1, UnitRace("player")) or ""
+  setup.title:SetText("Forever Planner: set up " .. tostring(name))
+  local chain = self.plan and self.plan.routeChain or {}
+  local short = {}
+  for k, n in ipairs(chain) do if k <= 6 then short[#short + 1] = n end end
+  if #chain > 6 then short[#short + 1] = ("... %d zones in all"):format(#chain) end
+  setup.intro:SetText(("%s %s, level %d. Your route: %s (%d steps). It ticks itself off from your quests.\n\nPick your spec. Talents follow it; the Plan window shows each pick."):format(
+    tostring(self:Readable(race) or ""), tostring(self.className or self.class or ""), self:PlayerLevel(), table.concat(short, " > "),
+    self.plan and #self.plan.route or 0))
+  local y = -38 - setup.intro:GetStringHeight() - 10
+  for _, r in ipairs(setup.rows) do r:Hide(); r.label:Hide(); r.desc:Hide() end
+  local choices = self:SpecChoices()
+  setup.choice = self:CurrentSpec()
+  for i, c in ipairs(choices) do
+    local r = SetupRow(i)
+    r.key = c.key
+    r:ClearAllPoints()
+    r:SetPoint("TOPLEFT", 14, y)
+    r.label:SetText(c.name .. (c.recommended and (GOLD .. "  (recommended)|r") or ""))
+    r.desc:SetText(c.desc or "")
+    r:SetChecked(c.key == setup.choice)
+    r:Show(); r.label:Show(); r.desc:Show()
+    y = y - 8 - r.label:GetStringHeight() - r.desc:GetStringHeight() - 4
+  end
+  setup.group:ClearAllPoints()
+  setup.group:SetPoint("TOPLEFT", 14, y - 6)
+  setup.group:SetChecked(self.char.setup and self.char.setup.group or false)
+  y = y - 6 - 28
+  setup:SetHeight(-y + 50)
+  setup:Show()
+end

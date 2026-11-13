@@ -1,5 +1,8 @@
+import os, sys
 import sys
 from lupa.lua51 import LuaRuntime
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness
 
 import os
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -18,7 +21,7 @@ def load(path):
     fn()
 
 load(SCRATCH + "/wowstub.lua")
-for f in ["Core.lua", "Data/Druid.lua", "UI.lua"]:
+for f in harness.toc_files(routes=False):
     load(ADDON + f)
 
 fails = []
@@ -27,12 +30,12 @@ def check(cond, msg):
     if not cond: fails.append(msg)
 
 FP = G.ForeverPlanner
-plan = FP.plans.DRUID
+plan = FP.classes.DRUID.plan
 check(plan is not None, "Druid plan registered")
 
 # --- Data checks ---
 res = run("""
-local FP = ForeverPlanner; local p = FP.plans.DRUID; local errs = {}; local keys = {}
+local FP = ForeverPlanner; local p = FP.classes.DRUID.plan; local errs = {}; local keys = {}
 for i, s in ipairs(p.route) do
   if keys[s.key] then errs[#errs+1] = 'duplicate key '..s.key end; keys[s.key] = true
   if s.map and not FP.MAP[s.map] and not FP.ZONE[s.map] then errs[#errs+1] = 'unknown map '..s.map..' at '..s.key end
@@ -49,7 +52,7 @@ errs, long, nsteps, ntal = res
 check(errs == "", "route data valid " + errs)
 check(long == "", "all macros <= 255 chars " + long)
 print("   steps:", nsteps, "talent levels:", ntal)
-for m in run("local t={} for _,m in ipairs(ForeverPlanner.plans.DRUID.macros) do t[#t+1]=m.name..' '..m.from..'-'..m.to..': '..#m.text end return table.concat(t,'\\n')").split("\n"):
+for m in run("local t={} for _,m in ipairs(ForeverPlanner.classes.DRUID.plan.macros) do t[#t+1]=m.name..' '..m.from..'-'..m.to..': '..#m.text end return table.concat(t,'\\n')").split("\n"):
     print("   macro", m)
 
 # --- Login ---

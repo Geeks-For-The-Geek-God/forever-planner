@@ -1,6 +1,8 @@
 # Forever's talent window (PlayerSpellsFrame) on the modern C_Traits talent system.
 import os, sys
 from lupa.lua51 import LuaRuntime
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness
 S = os.path.dirname(os.path.abspath(__file__)); A = os.path.join(S, "..", "ForeverPlanner") + "/"
 lua = LuaRuntime(unpack_returned_tuples=True); G = lua.globals()
 def load(p):
@@ -38,7 +40,7 @@ C_Spell = {
   GetSpellTexture = function(sid) for _, n in pairs(NODES) do if n[1] + 5000 == sid then return n[3] end end end,
 }
 """)
-for f in ["Core.lua", "Data/Druid.lua", "UI.lua"]: load(A + f)
+for f in harness.toc_files(routes=False): load(A + f)
 lua.execute("""
 FireEvent("ADDON_LOADED","ForeverPlanner"); FireEvent("PLAYER_LOGIN")
 UIParent.shown = true
