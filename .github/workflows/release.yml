@@ -7,6 +7,7 @@ on:
     branches: [main]
     paths:
       - "ForeverPlanner/**"
+      - "updater/**"
       - "CHANGELOG-latest.md"
   workflow_dispatch:
 
@@ -52,7 +53,8 @@ jobs:
         run: |
           ZIP="ForeverPlanner-$VERSION.zip"
           zip -r "$ZIP" ForeverPlanner
-          gh release create "v$VERSION" "$ZIP" \
+          (cd updater && zip -r ../ForeverPlanner-Updater.zip .)
+          gh release create "v$VERSION" "$ZIP" ForeverPlanner-Updater.zip \
             --target "$GITHUB_SHA" \
             --title "Forever Planner $VERSION" \
             --notes-file CHANGELOG-latest.md

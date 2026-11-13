@@ -3,7 +3,12 @@
 
 ForeverPlanner = ForeverPlanner or {}
 local FP = ForeverPlanner
-FP.version = "0.3.0"
+FP.version = "0.3.1"
+-- Shown once after an update (newest first). Keep each line short.
+FP.news = {
+  "Updates now install themselves (Windows updater). After an update, /reload.",
+  "0.3.0: gear linked to route steps, Still need list, loot and quest-reward prompts.",
+}
 FP.plans = {}
 FP.log = {}          -- normalised title -> { title, id, complete }
 FP.doneCount = {}    -- normalised title -> number of times turned in
@@ -804,6 +809,15 @@ ev:SetScript("OnEvent", function(_, event, ...)
     FP:Refresh(false)
     if FP.plan then
       FP:Print(("Plan loaded: %s. /fp opens it."):format(FP.plan.name))
+    end
+    local last = FP.db.lastVersion
+    if last ~= FP.version then
+      local from = last or (next(FP.char.doneIds) and "an earlier version")
+      if from then
+        FP:Print(("Updated %s -> %s."):format(from, FP.version))
+        if FP.news[1] then FP:Print("New: " .. FP.news[1]) end
+      end
+      FP.db.lastVersion = FP.version
     end
   elseif event == "PLAYER_ENTERING_WORLD" then
     if not FP.historyDone and FP.plan then

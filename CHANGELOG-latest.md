@@ -1,8 +1,6 @@
-Forever Planner 0.3.0 (WoW: Forever, interface 16001)
+Forever Planner 0.3.1 (WoW: Forever, interface 16001)
 
-- Gear linked to route steps: the tracker shows "Gear here" on steps that give a planned item.
-- Gear tab: "Still need" list in route order, each item clickable for its step and a waypoint; what you wear in each slot; stopgap rewards still ahead.
-- Prompt when a planned item lands in your bags; the quest reward window names the reward your plan wants.
-- From 0.2.0: /fp catchup (preview, confirm, undo).
+- After an update, the addon says so once in chat ("Updated 0.3.0 -> 0.3.1") with what's new.
+- New: Windows updater (see the `updater` folder). It checks for a new release every 3 hours and after you log in, verifies the download and installs it. Type /reload in game to load it.
 
-Install: unzip into World of Warcraft\_forever_\Interface\AddOns. After an update, /reload is enough.
+Install by hand: unzip into World of Warcraft\_forever_\Interface\AddOns. After an update, /reload is enough.
