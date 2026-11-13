@@ -237,7 +237,7 @@ function FP:BuildPlan()
 
   local specName = (legacy and legacy.name) or spec.name or (build and build.spec) or ""
   plan.name = legacy and legacy.name or ((specName ~= "" and (specName .. " ") or "") .. (self.className or self.class or ""))
-  plan.routeName = legacy and legacy.routeName or ("Levelling route: " .. table.concat(names, " > "))
+  plan.routeName = legacy and legacy.routeName or ("Levelling route, " .. #names .. " zones")
   plan.routeUrl = legacy and legacy.routeUrl
   self.plan = plan
   self.stepIdx = nil

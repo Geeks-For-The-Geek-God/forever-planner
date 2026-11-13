@@ -5,4 +5,4 @@
 -- Format: claude/addon/README.md in the project, "Class files".
 local FP = ForeverPlanner
 
-FP:RegisterClass({ class = "ROGUE" })
+FP:RegisterClass({ class = "ROGUE", recommended = "combat" })

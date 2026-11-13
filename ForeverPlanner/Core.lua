@@ -3,9 +3,10 @@
 
 ForeverPlanner = ForeverPlanner or {}
 local FP = ForeverPlanner
-FP.version = "0.5.0"
+FP.version = "0.5.1"
 -- Shown once after an update (newest first). Keep each line short.
 FP.news = {
+  "Classes without their own plan yet now start on the spec their levelling guide recommends (Priest: Discipline, as in your Priest brief).",
   "Every character now gets a plan on first login: a levelling route from its starting zone to 60 (Polestar's routes), talents for your spec, and class quests. A short setup window asks your spec once.",
   "Talents: now read from Forever's own talent system, so the next pick glows on the talent window and the tracker sees your points.",
   "The route now runs to level 60 (steps 114-153, then 40-60 hubs and dungeons), with gear for 40-49, 50-59 and 60.",
