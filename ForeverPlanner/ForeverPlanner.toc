@@ -1,0 +1,12 @@
+## Interface: 16001
+## Title: Forever Planner
+## Notes: Follows your own levelling route step by step, with talents, macros and gear for your class plan.
+## Author: Lee (built with Claude)
+## Version: 0.3.0
+## SavedVariables: ForeverPlannerDB
+## SavedVariablesPerCharacter: ForeverPlannerChar
+## OptionalDeps: Questie, TomTom
+
+Core.lua
+Data\Druid.lua
+UI.lua

@@ -1,0 +1,6 @@
+<Bindings>
+	<Binding name="FOREVERPLANNER_TOGGLE" header="FOREVERPLANNER">ForeverPlanner_ToggleMain()</Binding>
+	<Binding name="FOREVERPLANNER_TRACKER">ForeverPlanner_ToggleTracker()</Binding>
+	<Binding name="FOREVERPLANNER_DONE">ForeverPlanner_StepDone()</Binding>
+	<Binding name="FOREVERPLANNER_WAY">ForeverPlanner_Waypoint()</Binding>
+</Bindings>
