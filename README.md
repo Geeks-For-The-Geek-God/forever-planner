@@ -16,6 +16,7 @@ Download `ForeverPlanner-Updater.zip` from the latest release, unblock and extra
 ## Layout
 - `ForeverPlanner/` — the addon. `Core.lua` (engine), `UI.lua` (tracker and window), `Data/<Class>.lua` (one plan per class).
 - `updater/` — Windows updater: `Install.cmd` sets up a scheduled task that runs `Update-ForeverPlanner.ps1` every 3 hours.
+- `MAINTAINING.md` — the weekly maintenance checklist; `data-sources.json` — which route doc revision each plan was built from.
 - `tests/` — Lua 5.1 tests against a stubbed WoW API. Run `pip install lupa==2.8` then `python tests/run_all.py`.
 - `.github/workflows/` — tests on every push; when the TOC version changes on `main`, the release workflow runs the tests, builds the zip and publishes release `vX.Y.Z`.
 

@@ -1,0 +1,10 @@
+{
+  "Druid": {
+    "dataFile": "ForeverPlanner/Data/Druid.lua",
+    "routeDoc": "https://claude.ai/artifact/KmG3TGZi9Lv2GUFknRDd45",
+    "routeDocId": "97f27ded-3db4-4ca2-9054-ee33bc937702",
+    "routeDocRev": 45,
+    "classBrief": "claude/classes/druid.md",
+    "builtOn": "2026-11-13"
+  }
+}

@@ -35,7 +35,7 @@ res = run("""
 local FP = ForeverPlanner; local p = FP.plans.DRUID; local errs = {}; local keys = {}
 for i, s in ipairs(p.route) do
   if keys[s.key] then errs[#errs+1] = 'duplicate key '..s.key end; keys[s.key] = true
-  if s.map and not FP.MAP[s.map] then errs[#errs+1] = 'unknown map '..s.map..' at '..s.key end
+  if s.map and not FP.MAP[s.map] and not FP.ZONE[s.map] then errs[#errs+1] = 'unknown map '..s.map..' at '..s.key end
   if (s.x and not s.y) or (s.y and not s.x) then errs[#errs+1] = 'half coords at '..s.key end
   if not s.title or not s.sec or not s.lvl then errs[#errs+1] = 'missing field at '..s.key end
   for _, o in ipairs(s.q or {}) do if type(o.q) ~= 'string' or o.q == '' then errs[#errs+1] = 'bad objective at '..s.key end end

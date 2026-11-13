@@ -3,9 +3,10 @@
 
 ForeverPlanner = ForeverPlanner or {}
 local FP = ForeverPlanner
-FP.version = "0.3.1"
+FP.version = "0.4.0"
 -- Shown once after an update (newest first). Keep each line short.
 FP.news = {
+  "The route now runs to level 60 (steps 114-153, then 40-60 hubs and dungeons), with gear for 40-49, 50-59 and 60.",
   "Updates now install themselves (Windows updater). After an update, /reload.",
   "0.3.0: gear linked to route steps, Still need list, loot and quest-reward prompts.",
 }
@@ -25,6 +26,8 @@ FP.MAP = {
   Stranglethorn=1434, Wetlands=1437, Ashenvale=1440, ThousandNeedles=1441, Stonetalon=1442,
   Desolace=1443, Feralas=1444, Dustwallow=1445, Tanaris=1446, Moonglade=1450,
   Orgrimmar=1454, ThunderBluff=1456, Undercity=1458,
+  Hinterlands=1425, BurningSteppes=1428, SwampOfSorrows=1435, Azshara=1447, Felwood=1448, UnGoro=1449,
+  Silithus=1451, Winterspring=1452, WesternPlaguelands=1422, EasternPlaguelands=1423,
 }
 FP.ZONE = {
   Durotar="Durotar", Mulgore="Mulgore", Barrens="The Barrens", Alterac="Alterac Mountains",
@@ -33,6 +36,10 @@ FP.ZONE = {
   Wetlands="Wetlands", Ashenvale="Ashenvale", ThousandNeedles="Thousand Needles", Stonetalon="Stonetalon Mountains",
   Desolace="Desolace", Feralas="Feralas", Dustwallow="Dustwallow Marsh", Tanaris="Tanaris", Moonglade="Moonglade",
   Orgrimmar="Orgrimmar", ThunderBluff="Thunder Bluff", Undercity="Undercity",
+  Hinterlands="The Hinterlands", BurningSteppes="Burning Steppes", SwampOfSorrows="Swamp of Sorrows", Azshara="Azshara",
+  Felwood="Felwood", UnGoro="Un'Goro Crater", Silithus="Silithus", Winterspring="Winterspring",
+  WesternPlaguelands="Western Plaguelands", EasternPlaguelands="Eastern Plaguelands",
+  Riverglades="Riverglades", -- Forever zone: no map ID known yet, so waypoints there print coordinates instead
 }
 
 ------------------------------------------------------------------------
