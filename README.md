@@ -13,9 +13,9 @@ Download the latest `ForeverPlanner-x.y.z.zip` from [Releases](../../releases) a
 ## Layout
 - `ForeverPlanner/` — the addon. `Core.lua` (engine), `UI.lua` (tracker and window), `Data/<Class>.lua` (one plan per class).
 - `tests/` — Lua 5.1 tests against a stubbed WoW API. Run `pip install lupa==2.8` then `python tests/run_all.py`.
-- `.github/workflows/` — tests on every push; a `v*` tag whose version matches the TOC builds the zip and publishes a release.
+- `.github/workflows/` — tests on every push; when the TOC version changes on `main`, the release workflow runs the tests, builds the zip and publishes release `vX.Y.Z`.
 
 ## Releasing
 1. Bump `## Version:` in `ForeverPlanner/ForeverPlanner.toc` and `FP.version` in `Core.lua`.
 2. Write the notes in `CHANGELOG-latest.md`.
-3. Push a tag `vX.Y.Z`.
+3. Push to `main`. The release appears under Releases a minute or two later. (It can also be run by hand from the Actions tab.)
