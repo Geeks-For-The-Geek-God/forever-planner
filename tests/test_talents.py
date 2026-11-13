@@ -37,13 +37,14 @@ end
 mt.GetID = function(self) return self.id end
 mt.SetParent = function(self, p) self.parent = p end
 mt.GetWidth = function() return 37 end
+mt.GetName = function(self) return self.name end
 SELECTED = 1
 function PanelTemplates_GetSelectedTab() return SELECTED end
 """)
 for f in ["Core.lua", "Data/Druid.lua", "UI.lua"]: load(A + f)
 lua.execute("""
 FireEvent("ADDON_LOADED","ForeverPlanner"); FireEvent("PLAYER_LOGIN")
--- The Blizzard talent screen: buttons TalentFrameTalent1..n for the shown tree, plus 3 tabs
+-- Classic's Blizzard talent screen: buttons TalentFrameTalent1..n for the shown tree, plus 3 tabs
 TalentFrame = CreateFrame("Frame", "TalentFrame"); TalentFrame.shown = false
 for t = 1, 3 do CreateFrame("Button", "TalentFrameTab" .. t) end
 function ShowTree(tab)
@@ -57,6 +58,7 @@ function ShowTree(tab)
   end
 end
 function Tick() ForeverPlanner.talentWatcher.scripts.OnUpdate(nil, 0.3) end
+ForeverPlanner:FindTalentWindows()
 """)
 def glow_parent():
     return lua.execute("""
@@ -97,5 +99,55 @@ check(g == "TalentFrameTalent2", "and back on (Feral Instinct 2 next)")
 lua.execute("UnitCharacterPoints = nil; ForeverPlanner:ScanTalents()")
 pts = lua.execute("return ForeverPlanner:UnspentTalentPoints()")
 check(pts == 22 - 9 - 12, "fallback unspent points from level and spent ranks: %s" % pts)
+
+# ---------- Forever's three-tree window: unnamed nested buttons, found by icon ----------
+lua.execute("""
+TalentFrame.shown = false; Tick()
+TREES[2].talents[2][2] = 0; TALENT_POINTS = 1; PLAYER_LEVEL = 21; ForeverPlanner:ScanTalents()
+local function obj(kind, name, parent)
+  local o = { kind = kind, name = name, parent = parent, shown = true, kids = {}, regs = {} }
+  o.IsVisible = function(s) local p = s while p do if not p.shown then return false end p = p.parent end return true end
+  o.IsShown = function(s) return s.shown end
+  o.GetName = function(s) return s.name end
+  o.GetParent = function(s) return s.parent end
+  o.GetChildren = function(s) return unpack(s.kids) end
+  o.GetRegions = function(s) return unpack(s.regs) end
+  o.IsObjectType = function(s, t) return s.kind == t end
+  o.GetWidth = function() return 40 end
+  if parent and parent.kids then if kind == "Texture" then table.insert(parent.regs, o) else table.insert(parent.kids, o) end end
+  return o
+end
+ALLFRAMES = {}; UIParent.shown = true
+Window = obj("Frame", "ForeverTalentsWindow", UIParent); Window.shown = false
+table.insert(ALLFRAMES, Window)
+for t, tree in ipairs(TREES) do
+  local col = obj("Frame", nil, Window)
+  local inner = obj("Frame", nil, col)
+  for i, tal in ipairs(tree.talents) do
+    local b = obj("Button", nil, inner); b.tal = tal[1]
+    local ic = obj("Texture", nil, b); ic.GetTexture = function() return tal[5] end
+    obj("Texture", nil, b).GetTexture = function() return "border" end
+  end
+end
+function EnumerateFrames(prev)
+  if prev == nil then return ALLFRAMES[1] end
+  for i, f in ipairs(ALLFRAMES) do if f == prev then return ALLFRAMES[i + 1] end end
+end
+ForeverPlanner:FindTalentWindows()
+Window.shown = true; Tick()
+""")
+r = lua.execute("""
+local function up(fn, name) local i = 1 while true do local n, v = debug.getupvalue(fn, i) if not n then return nil end if n == name then return v end i = i + 1 end end
+local g = up(ForeverPlanner.UpdateTalentGlow, "glow")
+local h = up(ForeverPlanner.UpdateTalentGlow, "hint")
+return g.shown and g.parent and g.parent.tal, h.shown and h.text.text, #ForeverPlanner.talentWindows
+""")
+print("   modern hint:", r[1])
+check(r[0] == "Feral Instinct", "Forever-style window: Feral Instinct's unnamed button glows (%s)" % r[0])
+check(r[2] >= 1, "the window was found by name scan")
+lua.execute("SlashCmdList['FOREVERPLANNER']('talentdebug')")
+dbg = [l for l in G.OUT.values()][-4:]
+for l in dbg: print("   ", l)
+check(any("Icon match on the open window" in l and "none" not in l for l in dbg), "/fp talentdebug reports the match")
 print("FAILURES:", len(fails))
 sys.exit(1 if fails else 0)

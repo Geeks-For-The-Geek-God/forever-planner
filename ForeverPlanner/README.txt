@@ -1,4 +1,4 @@
-Forever Planner 0.4.1 (WoW: Forever, interface 16001)
+Forever Planner 0.4.2 (WoW: Forever, interface 16001)
 
 INSTALL
 1. Close the game.

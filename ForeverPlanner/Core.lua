@@ -3,10 +3,10 @@
 
 ForeverPlanner = ForeverPlanner or {}
 local FP = ForeverPlanner
-FP.version = "0.4.1"
+FP.version = "0.4.2"
 -- Shown once after an update (newest first). Keep each line short.
 FP.news = {
-  "Talent screen: your next planned talent now glows, with a note saying what to take and where.",
+  "Talent screen: works with Forever's three-tree window. Your next talent glows; a note below says what and where.",
   "The route now runs to level 60 (steps 114-153, then 40-60 hubs and dungeons), with gear for 40-49, 50-59 and 60.",
   "Updates now install themselves (Windows updater). After an update, /reload.",
   "0.3.0: gear linked to route steps, Still need list, loot and quest-reward prompts.",
@@ -911,6 +911,7 @@ local HELP = {
   "/fp catchup - preview skipping unfinished steps behind your furthest progress; confirm to apply, undo to reverse",
   "/fp lock - lock or unlock the tracker position",
   "/fp talentglow - turn the talent screen highlight on or off",
+  "/fp talentdebug - show what the addon sees on the talent screen",
   "/fp reset confirm - clear this character's route progress",
 }
 
@@ -935,6 +936,8 @@ SlashCmdList["FOREVERPLANNER"] = function(msg)
   elseif cmd == "autoway" then
     FP.char.autoWay = not FP.char.autoWay
     FP:Print("Automatic waypoints " .. (FP.char.autoWay and "on." or "off."))
+  elseif cmd == "talentdebug" then
+    FP:TalentDebug()
   elseif cmd == "talentglow" then
     FP.char.talentGlow = (FP.char.talentGlow == false)
     FP:Print("Talent screen highlight " .. (FP.char.talentGlow and "on." or "off."))

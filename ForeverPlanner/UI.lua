@@ -544,12 +544,14 @@ function FP:UpdateUI()
 end
 
 ------------------------------------------------------------------------
--- Talent screen: glow on the next planned talent, a note saying what and where,
--- and a glow on the tree's tab when the pick is in another tree.
--- Purely visual: you still click the talent yourself.
+-- Talent screen: glow on the next planned talent and a note saying what and where.
+-- Works with Classic's one-tree-at-a-time window and with Forever's three-tree window:
+-- the talent's button is found by its icon, so no frame names need to be known.
+-- Purely visual: you still click the talent (and Apply Changes) yourself.
 ------------------------------------------------------------------------
-local TALENT_FRAMES = { "TalentFrame", "PlayerTalentFrame" }
+local KNOWN_TALENT_FRAMES = { "TalentFrame", "PlayerTalentFrame", "PlayerSpellsFrame", "ClassTalentFrame" }
 local glow, tabGlow, hint, watcher
+FP.talentWindows = {}
 
 local function MakeGlow(parent)
   local f = CreateFrame("Frame", nil, parent)
@@ -564,9 +566,7 @@ local function MakeGlow(parent)
   if ag then
     ag:SetLooping("BOUNCE")
     local a = ag:CreateAnimation("Alpha")
-    if a then
-      a:SetFromAlpha(1); a:SetToAlpha(0.35); a:SetDuration(0.7)
-    end
+    if a then a:SetFromAlpha(1); a:SetToAlpha(0.35); a:SetDuration(0.7) end
     f.anim = ag
   end
   f:Hide()
@@ -589,14 +589,106 @@ local function HideGlow(g)
   end
 end
 
+local function Visible(f)
+  if not f then return false end
+  if f.IsVisible then local ok, v = pcall(f.IsVisible, f); if ok and v ~= nil then return v and true or false end end
+  return f.IsShown and f:IsShown() and true or false
+end
+
+local function NameOf(f)
+  if f and f.GetName then local ok, n = pcall(f.GetName, f); if ok and type(n) == "string" then return n end end
+end
+
+-- Remember every top-level frame that looks like a talent window.
+function FP:FindTalentWindows()
+  local list, seen = {}, {}
+  local function add(f)
+    if f and not seen[f] then seen[f] = true; list[#list + 1] = f end
+  end
+  for _, n in ipairs(KNOWN_TALENT_FRAMES) do add(_G[n]) end
+  if EnumerateFrames then
+    pcall(function()
+      local f, count = EnumerateFrames(), 0
+      while f and count < 30000 do
+        count = count + 1
+        local n = NameOf(f)
+        if n and not n:find("^ForeverPlanner") and (n:find("Talent") or n:find("SpellsFrame")) then
+          local p = f.GetParent and f:GetParent()
+          if p == nil or p == UIParent then add(f) end
+        end
+        f = EnumerateFrames(f)
+      end
+    end)
+  end
+  self.talentWindows = list
+  return list
+end
+
 local function OpenTalentFrame()
-  for _, name in ipairs(TALENT_FRAMES) do
-    local f = _G[name]
-    if f and f.IsShown and f:IsShown() then return f, name end
+  for _, f in ipairs(FP.talentWindows) do
+    if Visible(f) then return f, NameOf(f) end
   end
 end
 
-local function SelectedTab(frame, name)
+local function TexturesOf(region)
+  local out = {}
+  if region.GetTexture then
+    local ok, t = pcall(region.GetTexture, region); if ok and t ~= nil then out[#out + 1] = t end
+  end
+  if region.GetTextureFileID then
+    local ok, t = pcall(region.GetTextureFileID, region); if ok and t ~= nil then out[#out + 1] = t end
+  end
+  return out
+end
+
+local function IconMatches(region, icon)
+  for _, t in ipairs(TexturesOf(region)) do
+    if tostring(t):lower() == tostring(icon):lower() then return true end
+  end
+  return false
+end
+
+-- Depth-first search of the window for a visible frame showing the talent's icon.
+-- Prefers buttons (the clickable talent) over plain frames.
+local function FindByIcon(root, icon)
+  if icon == nil then return nil end
+  local best
+  local function walk(f, depth)
+    if depth > 9 or not Visible(f) then return end
+    if f.GetRegions then
+      for _, r in ipairs({ f:GetRegions() }) do
+        if r.IsObjectType and r:IsObjectType("Texture") and Visible(r) and IconMatches(r, icon) then
+          local isButton = f.IsObjectType and f:IsObjectType("Button")
+          if isButton then best = f; return true end
+          best = best or f
+        end
+      end
+    end
+    if f.GetChildren then
+      for _, c in ipairs({ f:GetChildren() }) do
+        if walk(c, depth + 1) then return true end
+      end
+    end
+  end
+  walk(root, 0)
+  return best
+end
+
+-- Classic's window: talent buttons are named <Frame>Talent<n> and their ID is the talent index.
+local function FindNamedButton(frameName, info)
+  if not frameName then return nil end
+  for i = 1, 100 do
+    local b = _G[frameName .. "Talent" .. i]
+    if not b then break end
+    if Visible(b) and b.GetID and b:GetID() == info.index then
+      local icon = _G[frameName .. "Talent" .. i .. "IconTexture"]
+      if not icon or info.icon == nil or IconMatches(icon, info.icon) then return b end
+    end
+  end
+end
+
+-- Classic's window: one tree shown, buttons named <Frame>Talent<n>, tabs <Frame>Tab<n>.
+local function SelectedTab(frame)
   if PanelTemplates_GetSelectedTab then
     local ok, t = pcall(PanelTemplates_GetSelectedTab, frame)
     if ok and type(t) == "number" then return t end
@@ -604,86 +696,113 @@ local function SelectedTab(frame, name)
   return frame.selectedTab or frame.currentSelectedTab
 end
 
-local function SameIcon(a, b)
-  if a == nil or b == nil then return true end -- can't compare: trust the index
-  return tostring(a):lower() == tostring(b):lower()
-end
-
--- Finds the talent button for the pick on the currently shown tree, if any.
-local function FindButton(frameName, info)
-  for i = 1, 100 do
-    local b = _G[frameName .. "Talent" .. i]
-    if not b then break end
-    if b.IsShown and b:IsShown() and b.GetID and b:GetID() == info.index then
-      local icon = _G[frameName .. "Talent" .. i .. "IconTexture"]
-      if SameIcon(icon and icon.GetTexture and icon:GetTexture(), info.icon) then return b end
-    end
-  end
+local function ClassicTabButton(frameName, info)
+  if not frameName or not _G[frameName .. "Talent1"] then return nil end -- not a Classic window
+  local frame = _G[frameName]
+  local shown = SelectedTab(frame)
+  if shown ~= nil and shown ~= info.tab then return _G[frameName .. "Tab" .. info.tab] end
 end
 
 function FP:UpdateTalentGlow()
   local frame, frameName = OpenTalentFrame()
-  if not frame then HideGlow(glow); HideGlow(tabGlow); if hint then hint:Hide() end; return end
-  if not (self.plan and self.char) or self.char.talentGlow == false then
+  if not frame or not (self.plan and self.char) or self.char.talentGlow == false then
     HideGlow(glow); HideGlow(tabGlow); if hint then hint:Hide() end; return
   end
   if not glow then glow = MakeGlow(frame); tabGlow = MakeGlow(frame) end
   if not hint then
-    hint = CreateFrame("Frame", nil, frame)
-    hint:SetSize(320, 34)
-    Bg(hint, 0.75)
-    hint.text = hint:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    hint.text:SetPoint("TOPLEFT", 6, -4)
-    hint.text:SetWidth(308)
+    hint = CreateFrame("Frame", "ForeverPlannerTalentHint", frame)
+    hint:SetSize(360, 34)
+    if hint.SetClampedToScreen then hint:SetClampedToScreen(true) end
+    hint:SetFrameStrata("DIALOG")
+    Bg(hint, 0.8)
+    hint.text = hint:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    hint.text:SetPoint("TOPLEFT", 8, -6)
+    hint.text:SetWidth(344)
     hint.text:SetJustifyH("LEFT")
   end
   hint:SetParent(frame)
   hint:ClearAllPoints()
-  hint:SetPoint("BOTTOM", frame, "TOP", 0, 2)
+  hint:SetPoint("TOP", frame, "BOTTOM", 0, -4)
 
   local pts = self:UnspentTalentPoints()
   local nxt = self:NextTalentInfo()
+  HideGlow(glow); HideGlow(tabGlow)
   if not nxt then
     hint.text:SetText(GOLD .. "Forever Planner:|r every planned talent is taken.")
-    hint:Show(); HideGlow(glow); HideGlow(tabGlow)
+    hint:SetHeight(hint.text:GetStringHeight() + 12); hint:Show()
     return
   end
   local info = nxt.info
   local where = ""
   if info then
-    where = (" - %s tree, row %s, column %s"):format(info.tabName or ("tree " .. info.tab), tostring(info.tier or "?"), tostring(info.column or "?"))
+    where = ("\n%s tree, row %s, column %s"):format(info.tabName or ("tree " .. info.tab), tostring(info.tier or "?"), tostring(info.column or "?"))
   end
   local lead = (pts and pts > 0) and ("Spend your point: " .. WHITE .. nxt.text .. "|r") or ("Next pick (level " .. nxt.level .. "): " .. WHITE .. nxt.text .. "|r")
   hint.text:SetText(GOLD .. "Forever Planner|r  " .. lead .. where)
-  hint:SetHeight(hint.text:GetStringHeight() + 10)
+  hint:SetHeight(hint.text:GetStringHeight() + 12)
   hint:Show()
 
-  HideGlow(glow); HideGlow(tabGlow)
+  self.talentGlowTarget = nil
   if not (info and pts and pts > 0) then return end
-  local shownTab = SelectedTab(frame, frameName)
-  if shownTab == nil or shownTab == info.tab then
-    local b = FindButton(frameName, info)
-    if b then ShowGlowOn(glow, b, (b.GetWidth and b:GetWidth() or 37) * 1.9) end
+  local tabButton = ClassicTabButton(frameName, info)
+  if tabButton then
+    ShowGlowOn(tabGlow, tabButton, (tabButton.GetWidth and tabButton:GetWidth() or 80) * 1.3)
+    self.talentGlowTarget = NameOf(tabButton) or "tab"
+    return
   end
-  if shownTab ~= nil and shownTab ~= info.tab then
-    local tabButton = _G[frameName .. "Tab" .. info.tab]
-    if tabButton then ShowGlowOn(tabGlow, tabButton, (tabButton.GetWidth and tabButton:GetWidth() or 80) * 1.3) end
+  local b = FindNamedButton(frameName, info) or FindByIcon(frame, info.icon)
+  if b then
+    ShowGlowOn(glow, b, (b.GetWidth and b:GetWidth() or 37) * 1.9)
+    self.talentGlowTarget = NameOf(b) or "talent button"
   end
 end
 
--- Watch for the talent screen opening, switching tree or changing, without touching Blizzard's code.
+-- What the addon sees, for when the highlight doesn't appear.
+function FP:TalentDebug()
+  self:ScanTalents()
+  self:FindTalentWindows()
+  local raw = UnitCharacterPoints and select(2, pcall(UnitCharacterPoints, "player"))
+  self:Print(("Talents: version %s, API points %s, worked-out points %s, ranks read: %s"):format(
+    self.version, tostring(raw), tostring(self:UnspentTalentPoints()), self.talentRanks and "yes" or "no"))
+  local nxt = self:NextTalentInfo()
+  if nxt then
+    local i = nxt.info
+    self:Print(("Next pick: %s; %s"):format(nxt.text, i and ("tree %s (%s), row %s, column %s, icon %s"):format(
+      tostring(i.tab), tostring(i.tabName), tostring(i.tier), tostring(i.column), tostring(i.icon)) or "not found in the talent list"))
+  end
+  local names = {}
+  for _, f in ipairs(self.talentWindows) do names[#names + 1] = (NameOf(f) or "?") .. (Visible(f) and " (open)" or "") end
+  self:Print("Talent windows: " .. (#names > 0 and table.concat(names, ", ") or "none found"))
+  local frame = OpenTalentFrame()
+  if frame and nxt and nxt.info then
+    local b = FindByIcon(frame, nxt.info.icon)
+    self:Print("Icon match on the open window: " .. (b and (NameOf(b) or "unnamed frame") or "none"))
+  elseif not frame then
+    self:Print("Open your talent window (N) and run /fp talentdebug again.")
+  end
+end
+
+-- Watch for the talent window opening or changing, without touching Blizzard's code.
 watcher = CreateFrame("Frame")
-local elapsed, wasOpen, lastKey = 0, false, nil
+local elapsed, wasOpen, lastKey, rescanAt = 0, false, nil, nil
 watcher:SetScript("OnUpdate", function(_, dt)
   elapsed = elapsed + (dt or 0)
   if elapsed < 0.2 then return end
   elapsed = 0
+  if rescanAt and GetTime and GetTime() >= rescanAt then rescanAt = nil; FP:FindTalentWindows() end
   local frame, frameName = OpenTalentFrame()
-  local key = frame and (frameName .. ":" .. tostring(SelectedTab(frame, frameName)) .. ":" .. tostring(FP:UnspentTalentPoints()) .. ":" .. tostring(FP.talentSpent))
+  local key = frame and (tostring(frameName) .. ":" .. tostring(SelectedTab(frame)) .. ":" .. tostring(FP:UnspentTalentPoints()) .. ":" .. tostring(FP.talentSpent))
   if (frame ~= nil) ~= wasOpen or key ~= lastKey then
     wasOpen, lastKey = frame ~= nil, key
     if frame then FP:ScanTalents() end
     FP:UpdateTalentGlow()
   end
+end)
+watcher:RegisterEvent("ADDON_LOADED")
+watcher:RegisterEvent("PLAYER_LOGIN")
+watcher:SetScript("OnEvent", function()
+  -- Talent windows are often created when their Blizzard addon loads: look again a moment later
+  -- (many addons load at once at login, so this waits and scans once).
+  rescanAt = (GetTime and GetTime() or 0) + 1
 end)
 FP.talentWatcher = watcher

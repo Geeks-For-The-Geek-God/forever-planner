@@ -1,6 +1,6 @@
-Forever Planner 0.4.1 (WoW: Forever, interface 16001)
+Forever Planner 0.4.2 (WoW: Forever, interface 16001)
 
-- Talent screen: when you have a point to spend, your next planned talent glows, with a note above the window saying what to take and where (tree, row, column). If it's in another tree, that tree's tab glows. Purely visual: you still click it yourself. /fp talentglow turns it off or on.
-- Talent points are now worked out from your level and spent talents if the game doesn't report them directly.
+- Talent screen highlight now works with Forever's three-tree talent window, not just Classic's: the addon finds your next talent by its icon, makes it glow, and puts a note under the window saying what to take and where (tree, row, column). Click it, then Apply Changes.
+- New /fp talentdebug: shows what the addon sees on the talent screen, if the highlight doesn't appear.
 
 After an update, /reload is enough.
