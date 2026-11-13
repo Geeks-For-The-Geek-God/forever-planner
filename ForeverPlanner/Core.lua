@@ -3,9 +3,10 @@
 
 ForeverPlanner = ForeverPlanner or {}
 local FP = ForeverPlanner
-FP.version = "0.5.1"
+FP.version = "0.5.2"
 -- Shown once after an update (newest first). Keep each line short.
 FP.news = {
+  "The route now follows you: a step finishes as soon as its quests are done, abandoned quests stop holding it up, and steps you've moved on from are skipped by themselves (/fp undo brings them back).",
   "Classes without their own plan yet now start on the spec their levelling guide recommends (Priest: Discipline, as in your Priest brief).",
   "Every character now gets a plan on first login: a levelling route from its starting zone to 60 (Polestar's routes), talents for your spec, and class quests. A short setup window asks your spec once.",
   "Talents: now read from Forever's own talent system, so the next pick glows on the talent window and the tracker sees your points.",
@@ -149,7 +150,48 @@ function FP:ScanLog()
       end
     end)
   end
+  local prev = self.logById
   self.log, self.logById = log, byId
+  if self.char then
+    if self.logScanned and prev then
+      for id, e in pairs(prev) do
+        if not byId[id] then self:QuestLeftLog(id, e.title) end
+      end
+    end
+    for id in pairs(byId) do self.char.abandoned[id] = nil end
+  end
+  self.logScanned = true
+end
+
+function FP:QuestFlaggedDone(id)
+  if C_QuestLog and C_QuestLog.IsQuestFlaggedCompleted then
+    local ok, r = pcall(C_QuestLog.IsQuestFlaggedCompleted, id)
+    if ok and r then return true end
+  end
+  if IsQuestFlaggedCompleted then
+    local ok, r = pcall(IsQuestFlaggedCompleted, id)
+    if ok and r then return true end
+  end
+  return false
+end
+
+-- A quest left your log: turned in (even if the turn-in event was missed) or abandoned.
+function FP:QuestLeftLog(id, title)
+  if self.char.doneIds[id] then return end
+  local function check()
+    if self.char.doneIds[id] or self.logById[id] then return end
+    if self:QuestFlaggedDone(id) then
+      self.char.doneIds[id] = title or true
+      self:Recount()
+    else
+      self.char.abandoned[id] = title or true
+      if self.plan and self.plan.questSteps and self.plan.questSteps[id] then
+        self:Print(("Abandoned %s: the route won't wait for it. Pick it up again and it comes back."):format(title or ("quest " .. id)))
+      end
+    end
+    self:Refresh(true)
+  end
+  if C_Timer and C_Timer.After then C_Timer.After(1.5, check) else check() end
 end
 
 function FP:Recount()
@@ -246,13 +288,15 @@ end
 function FP:ObjDone(o, step, idx)
   local k = o.k
   if o.id and o.id ~= 0 and (k == "a" or k == "t" or k == "c" or k == "o") then
-    local done = self.char.doneIds[o.id] ~= nil
-    if done then return true end
+    local r
+    if self.char.doneIds[o.id] ~= nil then return true end
     local L = self.logById[o.id]
-    if k == "t" then return false
-    elseif k == "a" then return L ~= nil
-    elseif k == "c" then return (L and L.complete) and true or false
-    else return (L and (L.complete or (L.objs and L.objs[o.i or 1]))) and true or false end
+    if k == "t" then r = false
+    elseif k == "a" then r = L ~= nil
+    elseif k == "c" then r = (L and L.complete) and true or false
+    else r = (L and (L.complete or (L.objs and L.objs[o.i or 1]))) and true or false end
+    -- goals from a title-based plan also still match by title
+    if r or not o.byTitle then return r end
   end
   if k == "l" then
     if o.fr then return self:LevelProgress() >= (o.id or 0) + o.fr end
@@ -277,16 +321,49 @@ end
 local function IsHard(o) return o.k == "a" or o.k == "t" or o.k == "c" or o.k == "o" or o.k == "l" end
 FP.IsHard = IsHard
 
--- Required quest goals of a step: how many, and how many are done.
-function FP:StepCounts(step)
-  local req, reqDone = 0, 0
-  for idx, o in ipairs(step.q or {}) do
-    if not o.opt and IsHard(o) then
-      req = req + 1
-      if self:ObjDone(o, step, idx) then reqDone = reqDone + 1 end
+-- A quest you won't be doing: you abandoned it, or every route step that picks it up was skipped
+-- (by you, by the route following you, or because its condition didn't apply). Its other goals stop holding the route.
+function FP:QuestDropped(id)
+  if not id or id == 0 or not self.char then return false end
+  local cache = self.dropCache
+  if cache and cache[id] ~= nil then return cache[id] end
+  local r = false
+  if not self.char.doneIds[id] and not self.logById[id] then
+    if self.char.abandoned[id] then
+      r = true
+    else
+      local acc = self.plan and self.plan.accepts and self.plan.accepts[id]
+      if acc then
+        r = true
+        for _, i in ipairs(acc) do
+          local key = self.plan.route[i].key
+          if not (self.char.skip[key] or self.char.autoSkip[key] or self.char.na[key]) then r = false; break end
+        end
+      end
     end
   end
-  return req, reqDone
+  if cache then cache[id] = r end
+  return r
+end
+
+function FP:GoalDropped(o)
+  return o.id and o.id ~= 0 and (o.k == "a" or o.k == "t" or o.k == "c" or o.k == "o") and self:QuestDropped(o.id) or false
+end
+
+-- Required quest goals of a step: how many, and how many are done. Also: how many quest goals it had
+-- before dropped quests were taken out.
+function FP:StepCounts(step)
+  local req, reqDone, all = 0, 0, 0
+  for idx, o in ipairs(step.q or {}) do
+    if not o.opt and IsHard(o) then
+      all = all + 1
+      if not self:GoalDropped(o) then
+        req = req + 1
+        if self:ObjDone(o, step, idx) then reqDone = reqDone + 1 end
+      end
+    end
+  end
+  return req, reqDone, all
 end
 
 -- Place, trainer and flight-path goals still open on a step (they hold it until seen,
@@ -315,6 +392,7 @@ local function AnyHardDone(self, step)
   end
   return false
 end
+FP.AnyHardDone = AnyHardDone
 
 -- Status of every step: "done", "skipped", "na" (its condition was false when the route got there),
 -- "along" (done on the way, never the current step) or "open". The current step is the first open one.
@@ -324,21 +402,28 @@ function FP:ComputeSteps()
   local na = self.char.na
   local raw = {}
   local laterProgress = false
+  self.dropCache = {}
+  self.leftBehind = {}
   for i = #route, 1, -1 do
     local s = route[i]
-    local req, reqDone = self:StepCounts(s)
+    local req, reqDone, all = self:StepCounts(s)
     local st
     if self.char.skip[s.key] then st = "skipped"
     elseif self.char.manual[s.key] then st = "done"
+    elseif self.char.autoSkip[s.key] and not self:StepInLog(s) then st = "skipped"; self.leftBehind[i] = true
     elseif reqDone == req then
-      local soft = self:SoftOpen(s)
-      local hasGoals = req > 0
-      if not hasGoals then
+      if req > 0 then
+        st = "done"                      -- its quest work is done: places and trainers don't hold it
+      elseif all > 0 then
+        st = "skipped"                   -- every quest on it was dropped
+      else
+        local soft = self:SoftOpen(s)
+        local hasGoals = false
         for _, o in ipairs(s.q or {}) do if FP.SOFT[o.k] and not o.opt then hasGoals = true end end
+        if soft == 0 and hasGoals then st = "done"
+        elseif laterProgress then st = "done"
+        else st = "open" end
       end
-      if soft == 0 and hasGoals then st = "done"
-      elseif laterProgress then st = "done"
-      else st = "open" end
     else st = "open" end
     raw[i] = st
     if not s.along and (st == "done" or AnyHardDone(self, s)) then laterProgress = true end
@@ -380,7 +465,7 @@ function FP:NextAction(step)
   if not step then return nil end
   for pass = 1, 2 do
     for idx, o in ipairs(step.q or {}) do
-      if o.k ~= "i" and (pass == 1) == (not o.opt) and not self:ObjDone(o, step, idx) then
+      if o.k ~= "i" and (pass == 1) == (not o.opt) and not self:ObjDone(o, step, idx) and not self:GoalDropped(o) then
         if not (o.k == "g" and self:SoftOpen(step) == 0) then return self:ObjText(o), o end
       end
     end
@@ -397,6 +482,8 @@ function FP:Refresh(fromEvent)
   local before = self.current
   self:ScanLog()
   self:ComputeSteps()
+  self:NoteProgress(fromEvent)
+  if fromEvent and self:FollowPlayer() then self:ComputeSteps() end
   self:FollowTarget()
   if fromEvent and before and self.current ~= before then
     local route = self.plan.route
@@ -427,6 +514,116 @@ function FP:FollowTarget()
   end
 end
 
+-- Remembers which steps you finish while playing (as opposed to ones already done in your quest
+-- history when you logged in); only those count as "you've moved on".
+function FP:NoteProgress(fromEvent)
+  local route = self.plan.route
+  local prev = self.prevStatus
+  local now = {}
+  for i, s in ipairs(route) do
+    local st = self.status[i]
+    now[s.key] = st
+    if fromEvent and prev and st == "done" and prev[s.key] and prev[s.key] ~= "done" and not self.char.manual[s.key] then
+      self.char.progressed[s.key] = true
+    end
+  end
+  self.prevStatus = now
+end
+
+-- Away from a step: on another map, more than ~150 yards from where it sends you, or 4+ levels above it.
+function FP:AwayFrom(s, map, px, py, lvl)
+  if (s.lvl or 0) + 4 <= lvl then return true end
+  local m, x, y = self:StepTarget(s)
+  local mapID = self:MapID(m)
+  if not (mapID and x and y and map) then return false end
+  if mapID ~= map then return true end
+  local sc = self:MapScale(map)
+  local dx, dy = px - x, py - y
+  if sc then return math.sqrt((dx * sc[1]) ^ 2 + (dy * sc[2]) ^ 2) > 150 end
+  return math.sqrt(dx * dx + dy * dy) > 8
+end
+
+-- Following you off the route: an unfinished step you've moved past (at least two of the next four
+-- steps finished, none of its quests in your log, and you're away from it) is skipped on its own.
+-- /fp undo brings the last batch back. Returns true if anything changed.
+function FP:FollowPlayer()
+  if self.char.follow == false or not self.current then return false end
+  local route = self.plan.route
+  local prog = self.char.progressed
+  local far
+  for i = #route, self.current + 1, -1 do
+    if self.status[i] == "done" and prog[route[i].key] then far = i; break end
+  end
+  if not far then return false end
+  local lvl = self:PlayerLevel()
+  local map, px, py = self:PlayerPos()
+  local left = {}
+  for i = self.current, far - 1 do
+    local st = self.status[i]
+    if st == "open" then
+      local s = route[i]
+      local _, _, all = self:StepCounts(s)
+      if all > 0 and not self.char.keep[s.key] and not self:StepInLog(s) then
+        local doneAfter, seen = 0, 0
+        for j = i + 1, #route do
+          local t = route[j]
+          local tst = self.status[j]
+          if tst ~= "na" and tst ~= "along" and not t.along then
+            local _, _, tall = self:StepCounts(t)
+            if tall > 0 then
+              seen = seen + 1
+              if tst == "done" and prog[t.key] then doneAfter = doneAfter + 1 end
+              if seen >= 4 then break end
+            end
+          end
+        end
+        if doneAfter >= 2 and (map or (s.lvl or 0) + 4 <= lvl) and self:AwayFrom(s, map, px, py, lvl) then
+          left[#left + 1] = s
+        end
+      end
+    end
+  end
+  if #left == 0 then return false end
+  local names, keys = {}, {}
+  for _, s in ipairs(left) do
+    self.char.autoSkip[s.key] = true
+    keys[#keys + 1] = s.key
+    if #names < 4 then names[#names + 1] = ("%s %s"):format(s.num or s.key, s.title) end
+  end
+  self.char.lastAuto = keys
+  self:Print(("You've moved on, so the route has too: skipped %s%s. /fp undo brings %s back.")
+    :format(table.concat(names, ", "), #left > 4 and (" and %d more"):format(#left - 4) or "", #left > 1 and "them" or "it"))
+  return true
+end
+
+function FP:UndoFollow()
+  local keys = self.char.lastAuto
+  if not keys or #keys == 0 then self:Print("Nothing to undo."); return end
+  for _, k in ipairs(keys) do self.char.autoSkip[k] = nil; self.char.keep[k] = true end
+  self.char.lastAuto = nil
+  self.view = nil
+  self:Refresh(false)
+  self:Print(("Brought back %d step%s. The route won't skip %s again on its own."):format(#keys, #keys > 1 and "s" or "", #keys > 1 and "them" or "it"))
+end
+
+-- Trainer, flight-path and hearth goals left open on the last few finished steps.
+function FP:Reminders()
+  local out = {}
+  local route = self.plan and self.plan.route
+  if not (route and self.current) then return out end
+  for i = math.max(1, self.current - 6), self.current - 1 do
+    local s = route[i]
+    if self.status[i] == "done" and not self.char.manual[s.key] then
+      for idx, o in ipairs(s.q or {}) do
+        if (o.k == "tr" or o.k == "fp" or o.k == "b") and not o.opt and not self:ObjDone(o, s, idx) then
+          out[#out + 1] = { step = s, idx = idx, goal = o }
+        end
+      end
+    end
+  end
+  return out
+end
+
 function FP:QueueRefresh()
   if self.refreshQueued then return end
   if C_Timer and C_Timer.After then
@@ -453,7 +650,12 @@ end
 function FP:ToggleSkip(i)
   local s = self.plan and self.plan.route[i]
   if not s then return end
-  self.char.skip[s.key] = (not self.char.skip[s.key]) or nil
+  if self.char.autoSkip[s.key] then
+    self.char.autoSkip[s.key] = nil
+    self.char.keep[s.key] = true
+  else
+    self.char.skip[s.key] = (not self.char.skip[s.key]) or nil
+  end
   self.char.manual[s.key] = nil
   if self.char.skip[s.key] and self.view == i then self.view = nil end
   self:Refresh(true)
@@ -463,9 +665,8 @@ end
 function FP:StepInLog(step)
   for _, o in ipairs(step.q or {}) do
     if not o.opt and IsHard(o) and o.k ~= "l" then
-      if o.id and o.id ~= 0 then
-        if self.logById[o.id] then return true end
-      elseif o.q and self.log[Norm(o.q)] then return true end
+      if o.id and o.id ~= 0 and self.logById[o.id] then return true end
+      if (not o.id or o.id == 0 or o.byTitle) and o.q and self.log[Norm(o.q)] then return true end
     end
   end
   return false
@@ -1062,6 +1263,10 @@ local function InitSaved()
   c.skip = c.skip or {}
   c.ticks = c.ticks or {}   -- place/trainer goals seen: "stepkey#n" -> true
   c.na = c.na or {}         -- steps whose condition didn't apply when the route reached them
+  c.abandoned = c.abandoned or {}  -- quest ID -> title, for quests you dropped from your log
+  c.autoSkip = c.autoSkip or {}    -- steps the route passed because you moved on without them
+  c.keep = c.keep or {}            -- steps you brought back: never skipped on their own again
+  c.progressed = c.progressed or {}  -- steps you finished while playing (not from old quest history)
   if c.autoWay == nil then c.autoWay = true end
   if c.trackerShown == nil then c.trackerShown = true end
   FP.db, FP.char = ForeverPlannerDB, c
@@ -1069,9 +1274,15 @@ end
 
 local function StartLiveTicker()
   if FP.liveTicker or not (C_Timer and C_Timer.NewTicker) then return end
+  local n = 0
   FP.liveTicker = C_Timer.NewTicker(1, function()
     local s = FP.plan and FP.current and FP.plan.route[FP.current]
     if s and FP:HasLiveGoals(s) then pcall(FP.CheckLive, FP) end
+    n = n + 1
+    -- every 10 s: check whether you've moved on from a step you left behind
+    if n % 10 == 0 and FP.plan and FP.char.follow ~= false and not (InCombatLockdown and InCombatLockdown()) then
+      FP:QueueRefresh()
+    end
   end)
 end
 
@@ -1194,6 +1405,8 @@ local HELP = {
   "/fp talentglow - turn the talent screen highlight on or off",
   "/fp talentdebug - show what the addon sees on the talent screen",
   "/fp setup - choose your spec and options again",
+  "/fp undo - bring back the steps the route skipped when you moved on",
+  "/fp follow - turn that automatic skipping off or on",
   "/fp side - class quests ready for your level; /fp side <n> adds one to your route",
   "/fp reset confirm - clear this character's route progress",
 }
@@ -1230,6 +1443,12 @@ SlashCmdList["FOREVERPLANNER"] = function(msg)
     FP:Print("Tracker " .. (FP.char.locked and "locked." or "unlocked: drag it to move."))
   elseif cmd == "sync" then FP:ImportHistory(true); FP:Refresh(false)
   elseif cmd == "setup" then if FP.ShowSetup then FP:ShowSetup() end
+  elseif cmd == "undo" then FP:UndoFollow()
+  elseif cmd == "follow" then
+    FP.char.follow = (FP.char.follow == false)
+    FP:Print(FP.char.follow and "The route follows you: steps you move on from are skipped on their own." or
+      "The route no longer skips steps on its own. Use Skip or /fp catchup.")
+    FP:Refresh(false)
   elseif cmd == "side" then
     local list = FP:SideReady()
     local n = tonumber(arg)
@@ -1261,6 +1480,7 @@ SlashCmdList["FOREVERPLANNER"] = function(msg)
     end
   elseif cmd == "reset" and arg == "confirm" then
     wipe(FP.char.manual); wipe(FP.char.skip); wipe(FP.char.ticks); wipe(FP.char.na)
+    wipe(FP.char.autoSkip); wipe(FP.char.keep); wipe(FP.char.abandoned); wipe(FP.char.progressed)
     FP.view = nil
     FP:Refresh(false)
     FP:Print("Route progress cleared. Quest history still counts.")

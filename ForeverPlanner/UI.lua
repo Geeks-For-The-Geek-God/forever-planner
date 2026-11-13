@@ -178,7 +178,8 @@ function FP:UpdateTracker()
   local st = self.status[i]
   local viewing = (self.view ~= nil and self.view ~= self.current)
   local tag = viewing and (GREY .. " (browsing; Now to return)|r") or ""
-  if st == "done" then tag = tag .. " " .. OK elseif st == "skipped" then tag = tag .. GREY .. " skipped|r"
+  if st == "done" then tag = tag .. " " .. OK
+  elseif st == "skipped" then tag = tag .. GREY .. ((self.leftBehind and self.leftBehind[i]) and " skipped (you moved on)|r" or " skipped|r")
   elseif st == "na" then tag = tag .. GREY .. " not needed|r" elseif st == "along" then tag = tag .. GREY .. " on the way|r" end
   local map, tx, ty = self:StepTarget(s)
   local zone = self:ZoneName(map) or ""
@@ -200,6 +201,13 @@ function FP:UpdateTracker()
         n = n + 1
         local fs = Line(n)
         fs:SetText(GREY .. "  " .. o.txt .. "|r")
+        place(fs, 2)
+      end
+    elseif self:GoalDropped(o) then
+      if n < 14 then
+        n = n + 1
+        local fs = Line(n)
+        fs:SetText(GREY .. "  " .. self:ObjText(o) .. " (not taken)|r")
         place(fs, 2)
       end
     elseif done and hideDone then
@@ -241,6 +249,17 @@ function FP:UpdateTracker()
           end
         end
       end
+    end
+  end
+
+  -- Trainer, flight path or hearth left open on the steps just finished
+  if not viewing then
+    for k, r in ipairs(self:Reminders()) do
+      if k > 2 then break end
+      n = n + 1
+      local fs = Line(n)
+      fs:SetText("|cffffd100Don't forget:|r " .. (r.goal.txt or ""))
+      place(fs, 2)
     end
   end
 

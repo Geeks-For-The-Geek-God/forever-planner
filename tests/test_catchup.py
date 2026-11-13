@@ -20,7 +20,7 @@ run=lua.execute
 run("""
 PLAYER_LEVEL = 30
 FireEvent("ADDON_LOADED","ForeverPlanner"); FireEvent("PLAYER_LOGIN")
-local FP = ForeverPlanner; local id = 1000
+local FP = ForeverPlanner; local id = 900000
 local skipTitles = { ["The Warsong Reports"]=true, ["Betrayal from Within"]=true, ["Weapons of Choice"]=true }
 for i, s in ipairs(FP.plan.route) do
   if s.key == "76" then break end

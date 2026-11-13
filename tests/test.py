@@ -58,11 +58,11 @@ for m in run("local t={} for _,m in ipairs(ForeverPlanner.classes.DRUID.plan.mac
 # --- Login ---
 run("""
 QUESTLOG = {
-  { title = "Miner's Fortune", id = 101, complete = true },
-  { title = "Jorn Skyseer", id = 102, complete = true },
-  { title = "Report to Kadrak", id = 103, complete = true },
-  { title = "Bruised Pride and Lion Hides", id = 104 },
-  { title = "Vrang's Game", id = 105 },
+  { title = "Miner's Fortune", id = 900101, complete = true },
+  { title = "Jorn Skyseer", id = 900102, complete = true },
+  { title = "Report to Kadrak", id = 900103, complete = true },
+  { title = "Bruised Pride and Lion Hides", id = 900104 },
+  { title = "Vrang's Game", id = 900105 },
 }
 FireEvent("ADDON_LOADED", "ForeverPlanner")
 FireEvent("PLAYER_LOGIN")
@@ -75,20 +75,20 @@ check(G._G["ForeverPlannerTracker"].shown, "tracker shown")
 print("   tracker head:", G._G["ForeverPlannerTracker"].head.text)
 
 # Accept Olgra -> c2a
-run("""table.insert(QUESTLOG, { title = "Her Name Is Olgra", id = 106 }); FireEvent("QUEST_ACCEPTED", 6, 106); FlushTimers()""")
+run("""table.insert(QUESTLOG, { title = "Her Name Is Olgra", id = 900106 }); FireEvent("QUEST_ACCEPTED", 6, 900106); FlushTimers()""")
 check(cur() == "c2a", "accepting Olgra moves to c2a, got %s" % cur())
 
 # Complete objectives of c2a (both complete in log) -> c2b
-run("""for _, q in ipairs(QUESTLOG) do if q.id == 104 or q.id == 105 then q.complete = true end end FireEvent("QUEST_LOG_UPDATE"); FlushTimers()""")
+run("""for _, q in ipairs(QUESTLOG) do if q.id == 900104 or q.id == 900105 then q.complete = true end end FireEvent("QUEST_LOG_UPDATE"); FlushTimers()""")
 check(cur() == "c2b", "completing Patriarchs/traps moves to c2b, got %s" % cur())
 
 # Turn in both, accept Hermit Tanner -> c2c
 run("""
 LAST_TITLE = "Bruised Pride and Lion Hides"; FireEvent("QUEST_COMPLETE")
-table.remove(QUESTLOG, 4); FireEvent("QUEST_TURNED_IN", 104)
+table.remove(QUESTLOG, 4); FireEvent("QUEST_TURNED_IN", 900104)
 LAST_TITLE = "Vrang's Game"; FireEvent("QUEST_COMPLETE")
-table.remove(QUESTLOG, 4); FireEvent("QUEST_TURNED_IN", 105)
-table.insert(QUESTLOG, { title = "The Hermit Tanner", id = 107 }); FireEvent("QUEST_ACCEPTED", 6, 107)
+table.remove(QUESTLOG, 4); FireEvent("QUEST_TURNED_IN", 900105)
+table.insert(QUESTLOG, { title = "The Hermit Tanner", id = 900107 }); FireEvent("QUEST_ACCEPTED", 6, 900107)
 FlushTimers()
 """)
 check(cur() == "c2c", "turn-ins move to c2c, got %s" % cur())
@@ -96,8 +96,8 @@ check(G.WAYPOINT is not None and G.WAYPOINT[4] == "Walton (ridge over the Dry Hi
 
 # History import: Questie names old quests
 run("""
-COMPLETED = { [201] = true, [202] = true, [203] = true }
-QUESTIE_NAMES = { [201] = "The Hermit Tanner", [202] = "Unwelcome Guests", [203] = "Trouble in the Valley" }
+COMPLETED = { [900201] = true, [900202] = true, [900203] = true }
+QUESTIE_NAMES = { [900201] = "The Hermit Tanner", [900202] = "Unwelcome Guests", [900203] = "Trouble in the Valley" }
 ForeverPlanner:ImportHistory(true); ForeverPlanner:Refresh(true); FlushTimers()
 """)
 check(cur() == "c3", "history import completes c2c and c2d (Trouble in the Valley in history), now c3: %s" % cur())

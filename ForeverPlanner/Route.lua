@@ -231,7 +231,32 @@ function FP:BuildPlan()
       for k, s in ipairs(steps) do s.sec = "Class quest: " .. (side.title or sideId); table.insert(route, at + k - 1, s) end
     end
   end
-  for i, s in ipairs(route) do s.num = i end
+  -- Older class routes name quests by title; their quest IDs (tools/map_quest_ids.py) make them match by ID.
+  if legacy and legacy.route and legacy.questIds then
+    for _, s in ipairs(legacy.route) do
+      for _, o in ipairs(s.q or {}) do
+        if not o.id and o.q then
+          local ids = legacy.questIds[Norm(o.q)]
+          if ids then o.id = ids[o.n or 1]; o.byTitle = true end
+        end
+      end
+    end
+  end
+  -- Which steps pick up each quest, and which steps mention it at all.
+  local accepts, questSteps = {}, {}
+  for i, s in ipairs(route) do
+    s.num = i
+    for _, o in ipairs(s.q or {}) do
+      if o.id and o.id ~= 0 and (o.k == "a" or o.k == "t" or o.k == "c" or o.k == "o") then
+        questSteps[o.id] = true
+        if o.k == "a" then
+          accepts[o.id] = accepts[o.id] or {}
+          table.insert(accepts[o.id], i)
+        end
+      end
+    end
+  end
+  plan.accepts, plan.questSteps = accepts, questSteps
   plan.route = route
   plan.routeChain = names
 
@@ -502,6 +527,9 @@ function FP:CheckLive()
       if self:Tick(s, idx) then changed = true end
     end
   end
+  for _, r in ipairs(self:Reminders()) do
+    if r.goal.k == "b" and self:LiveCheck(r.goal) and self:Tick(r.step, r.idx) then changed = true end
+  end
   if changed then self:Refresh(true) end
 end
 
@@ -526,6 +554,12 @@ function FP:OnNpcWindow(kind)
     local hit = (kind == "trainer" and o.k == "tr") or (kind == "taxi" and o.k == "fp")
       or (o.k == "tk" and npcID and o.id == npcID)
     if hit and self:Tick(s, idx) then changed = true end
+  end
+  -- "Don't forget" goals from the last few steps
+  for _, r in ipairs(self:Reminders()) do
+    if (kind == "trainer" and r.goal.k == "tr") or (kind == "taxi" and r.goal.k == "fp") then
+      if self:Tick(r.step, r.idx) then changed = true end
+    end
   end
   if changed then self:Refresh(true) end
 end

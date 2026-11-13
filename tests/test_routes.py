@@ -179,20 +179,19 @@ run("""
 OBJECTIVES[788] = { true }; OBJECTIVES[97279] = { true }
 FireEvent("QUEST_LOG_UPDATE"); FlushTimers()
 """)
-check(cur() == "Training weapons and boars" and "The Den" in run("return (ForeverPlanner:NextAction(ForeverPlanner.plan.route[ForeverPlanner.current]))"),
-      "objectives done: Next says go to the Den")
+check(cur() == "The Den", "objectives done: the step's quest work is done, so the 'go to the Den' point doesn't hold it: " + str(cur()))
 run('COMPLETED[788] = true; FireEvent("QUEST_TURNED_IN", 788); FireEvent("QUEST_LOG_UPDATE"); FlushTimers()')
-check(cur() == "The Den", "handing in at the Den passes the 'go to the Den' point: " + str(cur()))
-# The Den: trainer visit + hand-ins; the trainer goal is ticked by opening the trainer window
+# The Den: hand-ins plus a trainer visit; the quests finish the step, the trainer becomes a reminder
 run("""
 QUESTLOG = { { title = "Vile Familiars", id = 1485 }, { title = "Sting of the Scorpid", id = 789 }, { title = "Galgar's Cactus Apple Surprise", id = 4402 } }
 for _, id in ipairs({97279, 98575}) do COMPLETED[id] = true; FireEvent("QUEST_TURNED_IN", id) end
 FireEvent("QUEST_LOG_UPDATE"); FlushTimers()
 """)
-check(cur() == "The Den", "quests done but trainer not visited: still on the Den")
-check("class trainer" in (run("return (ForeverPlanner:NextAction(ForeverPlanner.plan.route[ForeverPlanner.current]))") or ""), "Next: visit your class trainer")
+check(cur() == "Hana'zua", "quests done at the Den: on to Hana'zua even before the trainer: " + str(cur()))
+rem = run("local t={} for _,r in ipairs(ForeverPlanner:Reminders()) do t[#t+1]=r.goal.txt end return table.concat(t,'; ')")
+check("class trainer" in rem, "trainer visit kept as a Don't forget reminder: " + rem)
 run('FireEvent("TRAINER_SHOW"); FlushTimers()')
-check(cur() == "Hana'zua", "trainer window ticks it: on to Hana'zua: " + str(cur()))
+check(run("return #ForeverPlanner:Reminders()") == 0, "opening the trainer clears the reminder")
 
 # A soft-only step is passed once a later step shows progress
 idx_class = run("for i,s in ipairs(ForeverPlanner.plan.route) do if s.title=='Class trainer' then return i end end")
@@ -262,6 +261,79 @@ check(run("return ForeverPlanner.plan.route[ForeverPlanner.current].sec").starts
 check(run("for i,s in ipairs(ForeverPlanner.plan.route) do if s.key=='%s' then return ForeverPlanner.plan.route[i-1].seg end end" % curkey) == "class/warlock/felhunter-horde",
       "inserted just before the step you were on")
 check("felhunter" not in run("local t={} for _,s in ipairs(ForeverPlanner:SideReady()) do t[#t+1]=s.id end return table.concat(t,',')"), "no longer offered once started")
+
+# ---------------------------------------------------------------- following you: missed turn-ins, abandons, moving on
+lua = session("""
+PLAYER_CLASS, PLAYER_CLASS_NAME, PLAYER_RACE, PLAYER_FACTION, PLAYER_LEVEL = "WARLOCK", "Warlock", "Troll", "Horde", 1
+C_QuestLog.IsQuestFlaggedCompleted = function(id) return COMPLETED[id] and true or false end
+""")
+run = lua.execute
+run('FireEvent("ADDON_LOADED","ForeverPlanner"); FireEvent("PLAYER_LOGIN"); FireEvent("PLAYER_ENTERING_WORLD"); FlushTimers()')
+run('ForeverPlanner:ApplySetup("affliction", false)')
+cur = lambda: run("local s = ForeverPlanner.plan.route[ForeverPlanner.current]; return s and s.title")
+# A turn-in whose event never arrived is still seen when the quest leaves the log
+run('QUESTLOG = { { title = "Your Place in the World", id = 4641 } }; FireEvent("QUEST_ACCEPTED"); FlushTimers()')
+run('QUESTLOG = { { title = "Vile Familiars", id = 1485 } }; COMPLETED[4641] = true; FireEvent("QUEST_LOG_UPDATE"); FlushTimers(); FlushTimers()')
+check(run("return ForeverPlanner.char.doneIds[4641] ~= nil") is True and run("return ForeverPlanner.char.abandoned[4641] == nil") is True,
+      "turn-in noticed from the quest leaving the log, without the turn-in event")
+
+# Abandoning a quest: its remaining goals stop holding the route
+run('QUESTLOG = { { title = "Vile Familiars", id = 1485 }, { title = "Cutting Teeth", id = 788 }, { title = "Wayward Weapons", id = 97279 } }; FireEvent("QUEST_ACCEPTED"); FlushTimers()')
+run('QUESTLOG = { { title = "Vile Familiars", id = 1485 }, { title = "Wayward Weapons", id = 97279 } }; FireEvent("QUEST_LOG_UPDATE"); FlushTimers(); FlushTimers()')
+check(run("return ForeverPlanner.char.progressed[ForeverPlanner.plan.route[1].key]") is True and cur() == "Training weapons and boars",
+      "step 1 finished while playing is remembered; on to step 2")
+check(run("return ForeverPlanner.char.abandoned[788] ~= nil"), "abandoning Cutting Teeth is noticed")
+check(run("return ForeverPlanner:QuestDropped(788)") is True, "Cutting Teeth dropped from the route")
+nxt = run("return (ForeverPlanner:NextAction(ForeverPlanner.plan.route[ForeverPlanner.current]))") or ""
+check("Mottled Boar" not in nxt, "Next no longer asks for its boars: " + nxt)
+check("Abandoned Cutting Teeth" in run("return OUT[#OUT]") or any("Abandoned Cutting Teeth" in run("return OUT[%d]" % k) for k in range(1, run("return #OUT") + 1)),
+      "chat says the route won't wait for it")
+run('OBJECTIVES[97279] = { true }; FireEvent("QUEST_LOG_UPDATE"); FlushTimers()')
+check(cur() == "The Den", "the other quest done: step finished without the abandoned one: " + str(cur()))
+den = run("for i,s in ipairs(ForeverPlanner.plan.route) do if s.title=='The Den' then return i end end")
+check(not run("""for idx,o in ipairs(ForeverPlanner.plan.route[%d].q) do if o.id==788 and o.k=='t' then return ForeverPlanner:StepCounts(ForeverPlanner.plan.route[%d]) and not ForeverPlanner:GoalDropped(o) end end return false""" % (den, den)),
+      "its turn-in at the Den doesn't hold the Den either")
+run('QUESTLOG = { { title = "Vile Familiars", id = 1485 }, { title = "Wayward Weapons", id = 97279 }, { title = "Cutting Teeth", id = 788 } }; FireEvent("QUEST_ACCEPTED"); FlushTimers()')
+check(run("return ForeverPlanner.char.abandoned[788] == nil and not ForeverPlanner:QuestDropped(788)"), "picking it up again brings it back")
+
+# Moving on: two later steps finished while you're somewhere else -> the step is skipped by itself
+run("""
+C_Map = { GetBestMapForUnit = function() return PMAP end, GetPlayerMapPosition = function() return { x = PX, y = PY } end }
+PMAP, PX, PY = 1411, 0.5, 0.5
+QUESTLOG = {}
+""")
+c = run("""local FP = ForeverPlanner
+for i = FP.current, #FP.plan.route do
+  local s = FP.plan.route[i]
+  local a
+  for _, o in ipairs(s.q) do if o.k == 'a' and o.id and o.id > 0 then a = o.id end end
+  if a then
+    for j = i + 1, #FP.plan.route do for _, o in ipairs(FP.plan.route[j].q) do if o.k == 't' and o.id == a then return i, a end end end
+  end
+end""")
+ci, qa = c
+run("ForeverPlanner.view = nil; for i = 1, %d - 1 do ForeverPlanner.char.manual[ForeverPlanner.plan.route[i].key] = true end; ForeverPlanner:Refresh(false)" % ci)
+ctitle = cur()
+tx = run("local m,x,y = ForeverPlanner:StepTarget(ForeverPlanner.plan.route[%d]); return m..' '..x..' '..y" % ci).split()
+run("PMAP, PX, PY = %s, %s, %s" % (tx[0], float(tx[1]) / 100, float(tx[2]) / 100))
+later = run("""local FP = ForeverPlanner; local n, keys = 0, {}
+for j = %d + 1, #FP.plan.route do
+  local s = FP.plan.route[j]; local _,_,all = FP:StepCounts(s)
+  if all > 0 and not s.along then FP.char.manual[s.key] = true; FP.char.progressed[s.key] = true; n = n + 1; keys[#keys+1] = s.key; if n == 2 then break end end
+end return table.concat(keys, ',')""" % ci)
+run("ForeverPlanner:Refresh(true)")
+check(cur() == ctitle, "standing at the step you haven't done: it waits for you (%s)" % ctitle)
+run("PMAP = 1413; ForeverPlanner:Refresh(true)")
+check(cur() != ctitle and run("return ForeverPlanner.char.autoSkip[ForeverPlanner.plan.route[%d].key]" % ci) is True,
+      "once you've left, the route moves on without it: now " + str(cur()))
+check(run("return ForeverPlanner:QuestDropped(%d)" % qa) is True, "the quest it would have given you no longer holds later steps")
+check("moved on, so the route has too" in run("local t={} for i=1,#OUT do t[#t+1]=OUT[i] end return table.concat(t,'|')"), "chat explains it and offers /fp undo")
+run('SlashCmdList["FOREVERPLANNER"]("undo")')
+check(cur() == ctitle, "/fp undo brings it back: " + str(cur()))
+run("ForeverPlanner:Refresh(true)")
+check(cur() == ctitle, "and it isn't skipped again on its own")
+run('SlashCmdList["FOREVERPLANNER"]("follow")')
+check(run("return ForeverPlanner.char.follow") is False, "/fp follow turns it off")
 
 # ---------------------------------------------------------------- the existing Tauren Druid (0.4 -> 0.5)
 lua = session("""
