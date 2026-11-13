@@ -648,14 +648,20 @@ local function IconMatches(region, icon)
   return false
 end
 
--- Depth-first search of the window for a visible frame showing the talent's icon.
--- Prefers buttons (the clickable talent) over plain frames.
-local function FindByIcon(root, icon)
-  if icon == nil then return nil end
+local function NodeOf(f)
+  if f.GetNodeID then local ok, n = pcall(f.GetNodeID, f); if ok and n then return n end end
+  return rawget(f, "nodeID")
+end
+
+-- Depth-first search of the window for the talent's button: by node ID (modern talent window),
+-- else by its icon. Prefers buttons (the clickable talent) over plain frames.
+local function FindByIcon(root, icon, nodeID)
+  if icon == nil and nodeID == nil then return nil end
   local best
   local function walk(f, depth)
-    if depth > 9 or not Visible(f) then return end
-    if f.GetRegions then
+    if depth > 12 or not Visible(f) then return end
+    if nodeID and NodeOf(f) == nodeID then best = f; return true end
+    if icon ~= nil and f.GetRegions then
       for _, r in ipairs({ f:GetRegions() }) do
         if r.IsObjectType and r:IsObjectType("Texture") and Visible(r) and IconMatches(r, icon) then
           local isButton = f.IsObjectType and f:IsObjectType("Button")
@@ -734,8 +740,10 @@ function FP:UpdateTalentGlow()
   end
   local info = nxt.info
   local where = ""
-  if info then
-    where = ("\n%s tree, row %s, column %s"):format(info.tabName or ("tree " .. info.tab), tostring(info.tier or "?"), tostring(info.column or "?"))
+  if info and info.tier then
+    where = ("\n%s tree, row %s, column %s"):format(info.tabName or ("tree " .. tostring(info.tab)), tostring(info.tier), tostring(info.column or "?"))
+  elseif info and info.tabName then
+    where = "\n" .. info.tabName .. " tree"
   end
   local lead = (pts and pts > 0) and ("Spend your point: " .. WHITE .. nxt.text .. "|r") or ("Next pick (level " .. nxt.level .. "): " .. WHITE .. nxt.text .. "|r")
   hint.text:SetText(GOLD .. "Forever Planner|r  " .. lead .. where)
@@ -750,7 +758,7 @@ function FP:UpdateTalentGlow()
     self.talentGlowTarget = NameOf(tabButton) or "tab"
     return
   end
-  local b = FindNamedButton(frameName, info) or FindByIcon(frame, info.icon)
+  local b = FindNamedButton(frameName, info) or FindByIcon(frame, nil, info.nodeID) or FindByIcon(frame, info.icon)
   if b then
     ShowGlowOn(glow, b, (b.GetWidth and b:GetWidth() or 37) * 1.9)
     self.talentGlowTarget = NameOf(b) or "talent button"
@@ -762,21 +770,27 @@ function FP:TalentDebug()
   self:ScanTalents()
   self:FindTalentWindows()
   local raw = UnitCharacterPoints and select(2, pcall(UnitCharacterPoints, "player"))
-  self:Print(("Talents: version %s, API points %s, worked-out points %s, ranks read: %s"):format(
-    self.version, tostring(raw), tostring(self:UnspentTalentPoints()), self.talentRanks and "yes" or "no"))
+  local ti = self.traitsInfo
+  self:Print(("Talents %s: system %s%s, points: game %s / traits %s / used %s, ranks read %s"):format(
+    self.version, tostring(self.talentAPI),
+    (self.talentAPI == "traits" and ti) and (" (config %s, %d trees, %d nodes)"):format(tostring(ti.configID), ti.trees, ti.nodes) or "",
+    tostring(raw), tostring(self.traitsUnspent), tostring(self:UnspentTalentPoints()), self.talentRanks and "yes" or "no"))
   local nxt = self:NextTalentInfo()
   if nxt then
     local i = nxt.info
-    self:Print(("Next pick: %s; %s"):format(nxt.text, i and ("tree %s (%s), row %s, column %s, icon %s"):format(
-      tostring(i.tab), tostring(i.tabName), tostring(i.tier), tostring(i.column), tostring(i.icon)) or "not found in the talent list"))
+    self:Print(("Next pick: %s; %s"):format(nxt.text, i and ("found: node %s, icon %s, rank %s/%s, tree %s"):format(
+      tostring(i.nodeID), tostring(i.icon), tostring(i.rank), tostring(i.maxRank), tostring(i.tabName or i.tab)) or "NOT found among your talents"))
   end
   local names = {}
-  for _, f in ipairs(self.talentWindows) do names[#names + 1] = (NameOf(f) or "?") .. (Visible(f) and " (open)" or "") end
-  self:Print("Talent windows: " .. (#names > 0 and table.concat(names, ", ") or "none found"))
-  local frame = OpenTalentFrame()
+  for _, f in ipairs(self.talentWindows) do if Visible(f) then names[#names + 1] = NameOf(f) or "?" end end
+  self:Print("Open talent windows: " .. (#names > 0 and table.concat(names, ", ") or "none"))
+  local frame, frameName = OpenTalentFrame()
   if frame and nxt and nxt.info then
-    local b = FindByIcon(frame, nxt.info.icon)
-    self:Print("Icon match on the open window: " .. (b and (NameOf(b) or "unnamed frame") or "none"))
+    local how, b = "none"
+    b = FindNamedButton(frameName, nxt.info); if b then how = "classic name" end
+    if not b then b = FindByIcon(frame, nil, nxt.info.nodeID); if b then how = "node ID" end end
+    if not b then b = FindByIcon(frame, nxt.info.icon); if b then how = "icon" end end
+    self:Print(("Button on %s: %s (%s)"):format(tostring(frameName), b and (NameOf(b) or "unnamed") or "not found", how))
   elseif not frame then
     self:Print("Open your talent window (N) and run /fp talentdebug again.")
   end

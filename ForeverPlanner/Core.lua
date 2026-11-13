@@ -3,10 +3,10 @@
 
 ForeverPlanner = ForeverPlanner or {}
 local FP = ForeverPlanner
-FP.version = "0.4.2"
+FP.version = "0.4.3"
 -- Shown once after an update (newest first). Keep each line short.
 FP.news = {
-  "Talent screen: works with Forever's three-tree window. Your next talent glows; a note below says what and where.",
+  "Talents: now read from Forever's own talent system, so the next pick glows on the talent window and the tracker sees your points.",
   "The route now runs to level 60 (steps 114-153, then 40-60 hubs and dungeons), with gear for 40-49, 50-59 and 60.",
   "Updates now install themselves (Windows updater). After an update, /reload.",
   "0.3.0: gear linked to route steps, Still need list, loot and quest-reward prompts.",
@@ -459,7 +459,77 @@ function FP:ParseTalent(text)
   return name, tonumber(rank)
 end
 
+-- Modern talent system (C_Traits), which Forever's talent window (PlayerSpellsFrame) runs on.
+local function TraitsCall(fn, ...)
+  if type(fn) ~= "function" then return nil end
+  local ok, a = pcall(fn, ...)
+  if ok then return a end
+end
+
+local function SpellNameIcon(spellID)
+  if not spellID then return nil end
+  local name, icon
+  if C_Spell then
+    name = TraitsCall(C_Spell.GetSpellName, spellID)
+    icon = TraitsCall(C_Spell.GetSpellTexture, spellID)
+  end
+  if not name and GetSpellInfo then
+    local ok, n, _, ic = pcall(GetSpellInfo, spellID)
+    if ok then name = n; icon = icon or ic end
+  end
+  if not icon and GetSpellTexture then icon = TraitsCall(GetSpellTexture, spellID) end
+  return name, icon
+end
+
+function FP:ScanTraits()
+  if not (C_ClassTalents and C_Traits) then return false end
+  local configID = TraitsCall(C_ClassTalents.GetActiveConfigID)
+  if not configID then return false end
+  local config = TraitsCall(C_Traits.GetConfigInfo, configID)
+  local treeIDs = config and config.treeIDs
+  if type(treeIDs) ~= "table" or #treeIDs == 0 then return false end
+  local ranks, where, spent, unspent, seenCurrency, nodes = {}, {}, 0, nil, {}, 0
+  for treeIndex, treeID in ipairs(treeIDs) do
+    for _, c in ipairs(TraitsCall(C_Traits.GetTreeCurrencyInfo, configID, treeID, false) or {}) do
+      local id = c.traitCurrencyID or (#seenCurrency + 1)
+      if not seenCurrency[id] and type(c.quantity) == "number" then
+        seenCurrency[id] = true
+        unspent = (unspent or 0) + c.quantity
+      end
+    end
+    for _, nodeID in ipairs(TraitsCall(C_Traits.GetTreeNodes, treeID) or {}) do
+      local node = TraitsCall(C_Traits.GetNodeInfo, configID, nodeID)
+      if node and node.isVisible ~= false then
+        nodes = nodes + 1
+        local rank = node.ranksPurchased or node.currentRank or 0
+        local entryIDs = node.entryIDs or {}
+        local entryID = (node.activeEntry and node.activeEntry.entryID) or entryIDs[1]
+        local entry = entryID and TraitsCall(C_Traits.GetEntryInfo, configID, entryID)
+        local def = entry and entry.definitionID and TraitsCall(C_Traits.GetDefinitionInfo, entry.definitionID)
+        local name, icon = SpellNameIcon(def and (def.overriddenSpellID or def.spellID))
+        name = (def and def.overrideName and def.overrideName ~= "" and def.overrideName) or name
+        icon = (def and def.overrideIcon) or icon
+        if type(name) == "string" then
+          local key = Norm(name)
+          ranks[key] = math.max(ranks[key] or 0, rank)
+          spent = spent + rank
+          local subTree = node.subTreeID and TraitsCall(C_Traits.GetSubTreeInfo, configID, node.subTreeID)
+          where[key] = { nodeID = nodeID, icon = icon, rank = rank, maxRank = node.maxRanks,
+            tab = treeIndex, tabName = subTree and subTree.name or nil, posX = node.posX, posY = node.posY }
+        end
+      end
+    end
+  end
+  if nodes == 0 then return false end
+  self.talentAPI = "traits"
+  self.talentRanks, self.talentWhere, self.talentSpent, self.traitsUnspent = ranks, where, spent, unspent
+  self.traitsInfo = { configID = configID, trees = #treeIDs, nodes = nodes }
+  return true
+end
+
 function FP:ScanTalents()
+  self.traitsUnspent = nil
+  if self:ScanTraits() then return end
   local ranks, where = {}, {}
   local found, spent = false, 0
   if GetNumTalentTabs and GetNumTalents and GetTalentInfo then
@@ -477,12 +547,12 @@ function FP:ScanTalents()
       end
     end)
   end
+  self.talentAPI = found and "classic" or "none"
   self.talentRanks = found and ranks or nil
   self.talentWhere = found and where or nil
   self.talentSpent = found and spent or nil
 end
 
--- The next planned pick with where it sits in the talent tree (nil fields if the client doesn't say).
 function FP:NextTalentInfo()
   local level, text = self:NextTalent()
   if not level then return nil end
@@ -492,6 +562,7 @@ function FP:NextTalentInfo()
 end
 
 function FP:UnspentTalentPoints()
+  if self.talentAPI == "traits" and type(self.traitsUnspent) == "number" then return self.traitsUnspent end
   if UnitCharacterPoints then
     local ok, n = pcall(UnitCharacterPoints, "player")
     if ok and type(n) == "number" then return n end
@@ -868,7 +939,8 @@ ev:SetScript("OnEvent", function(_, event, ...)
     local level = ...
     FP:OnLevelUp(level)
     FP:QueueRefresh()
-  elseif event == "CHARACTER_POINTS_CHANGED" or event == "PLAYER_TALENT_UPDATE" then
+  elseif event == "CHARACTER_POINTS_CHANGED" or event == "PLAYER_TALENT_UPDATE" or event == "TRAIT_CONFIG_UPDATED"
+      or event == "TRAIT_NODE_CHANGED" or event == "TRAIT_TREE_CURRENCY_INFO_UPDATED" then
     FP:ScanTalents()
     if FP.UpdateTalentGlow then FP:UpdateTalentGlow() end
     FP:QueueRefresh()
@@ -880,7 +952,8 @@ end)
 
 for _, e in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "QUEST_COMPLETE", "QUEST_TURNED_IN",
   "QUEST_ACCEPTED", "QUEST_LOG_UPDATE", "QUEST_REMOVED", "PLAYER_LEVEL_UP", "CHARACTER_POINTS_CHANGED",
-  "PLAYER_TALENT_UPDATE", "PLAYER_EQUIPMENT_CHANGED", "BAG_UPDATE_DELAYED" }) do
+  "PLAYER_TALENT_UPDATE", "PLAYER_EQUIPMENT_CHANGED", "BAG_UPDATE_DELAYED",
+  "TRAIT_CONFIG_UPDATED", "TRAIT_NODE_CHANGED", "TRAIT_TREE_CURRENCY_INFO_UPDATED" }) do
   pcall(ev.RegisterEvent, ev, e) -- an event this client doesn't have is skipped, not an error
 end
 

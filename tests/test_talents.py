@@ -148,6 +148,6 @@ check(r[2] >= 1, "the window was found by name scan")
 lua.execute("SlashCmdList['FOREVERPLANNER']('talentdebug')")
 dbg = [l for l in G.OUT.values()][-4:]
 for l in dbg: print("   ", l)
-check(any("Icon match on the open window" in l and "none" not in l for l in dbg), "/fp talentdebug reports the match")
+check(any("Button on" in l and "not found" not in l for l in dbg), "/fp talentdebug reports the match")
 print("FAILURES:", len(fails))
 sys.exit(1 if fails else 0)
