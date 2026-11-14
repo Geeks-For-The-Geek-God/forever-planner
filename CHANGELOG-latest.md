@@ -1,13 +1,14 @@
-## Forever Planner 0.6.0: best-in-slot gear routes
+## Forever Planner 0.6.1: gear plan on the character window
 
-**Restart the game once after this update** (it adds a new file). `/reload` is enough after that.
+`/reload` after the updater installs it (restart once if you haven't since 0.6.0).
 
-- **Your route now goes where your best gear is.** For your class and spec, every item with a known source is scored with your spec's stat weights: quest rewards, dungeon boss drops and crafts. The best item for each slot is picked for each level band (10-19, 20-29, 30-39, 40-49, 50-59 and 60).
-- **Quests:** a quest reward your levelling route already gets is linked to that step. If the route doesn't do the quest, its whole chain (every quest that opens it, with waypoints) is added where you reach its level.
-- **Dungeons:** each dungeon with a boss drop or quest reward on your list is added at its level as a block: pick up its quests, run it (quest objectives plus the bosses that drop your items), then hand in.
-- **Crafts:** crafted picks are listed with the profession and skill they need (or buy one on the Auction House), with the best quest or drop item as the second choice.
-- **Where you see it:** the Gear tab lists your picks for each level band, each linked to its step (click one for a waypoint). The tracker shows "Gear here" on the step that gets one, and the quest reward window names the reward to take.
-- **Setup:** a new "Include dungeons" option (on by default). `/fp setup` changes it.
-- Your Druid's own Feral plan (route and gear) is unchanged.
-
-Data: Polestar's item database (Forever item stats; sources from ForeverLevelingBiS, MIT, data 13 Oct) and stat weights, plus quest data from the Forever client. See NOTICE.md.
+- **Press C:** a gear plan panel opens beside your character window, showing the level band you're in. Each slot gets a row with:
+  - the item's icon and name in its quality colour;
+  - a tick if you're wearing it, or an hourglass if not, with "In your bags: equip it" when you have it but haven't put it on;
+  - where it comes from (quest, boss drop or craft) and the route step and level that get it.
+- **Click a row** to set a waypoint to that step and show it on the tracker. Hover a row for the item's tooltip, its second choice and what you're wearing now.
+- **Other bands:** the `<` and `>` buttons show the other level bands.
+- **On the character window itself:** each slot has a small tick or hourglass. Hovering a slot adds "plan wants ..." or "is your plan's pick" to its tooltip.
+- A "Gear plan" button on the character window hides or shows the panel, and the addon remembers your choice. `/fp gear` opens it too.
+- Quest givers are now your own faction's when a quest can be started in either faction's city (the library quests send the Horde to Undercity, not Stormwind).
+- The Druid's planned items now show icons too (121 of 143 found; the rest show a question mark until the game has seen them).

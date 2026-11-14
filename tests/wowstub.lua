@@ -33,6 +33,7 @@ function Widget:GetPoint() return "CENTER", nil, "CENTER", 0, 0 end
 function Widget:CreateFontString() return setmetatable({ scripts = {}, events = {} }, Widget) end
 function Widget:CreateTexture() return setmetatable({ scripts = {}, events = {} }, Widget) end
 function Widget:EnableMouse() end
+function Widget:SetTexture(t) self.tex = t end
 
 function CreateFrame(kind, name, parent, template)
   local f = setmetatable({ kind = kind, name = name, scripts = {}, events = {}, shown = true }, Widget)

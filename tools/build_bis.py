@@ -485,7 +485,16 @@ class Steps:
         s = sp[0]
         return self.maps.place(s['map'], s['x'], s['y'])
 
+    ENEMY_CITIES = {'Horde': {1453, 1455, 1457}, 'Alliance': {1454, 1456, 1458}}
+    faction = 'Horde'
+
     def giver(self, recs):
+        # A quest can have givers in both factions' cities (the library quests): use your own side's.
+        enemy = self.ENEMY_CITIES.get(self.faction, set())
+        def ok(r):
+            w = self.where(r['kind'], r['id']) if r['kind'] in ('npc', 'object') else None
+            return not (w and w[0] in enemy)
+        recs = sorted(recs, key=lambda r: 0 if ok(r) else 1)
         for r in recs:
             if r['kind'] == 'npc':
                 return self.db['npc'].get(r['id'], 'NPC %d' % r['id']), self.where('npc', r['id'])
@@ -650,7 +659,8 @@ def main():
                                 if s['dungeon']:
                                     dungeons.setdefault((faction, s['dungeon']), set()).add(('q', s['quest']))
                                 elif s['quest'] not in on_route:
-                                    chains[s['quest']] = max(chains.get(s['quest'], 0), e['avail'])
+                                    key = (faction, s['quest'])
+                                    chains[key] = max(chains.get(key, 0), e['avail'])
                             elif s['kind'] == 'drop':
                                 dungeons.setdefault((faction, s['dungeon']), set()).add(('d', s['npc']))
                         entries.append((slot, c))
@@ -662,7 +672,8 @@ def main():
 
     # ---------------------------------------------------------------- quest chains
     chain_out = {}
-    for qid, lvl in sorted(chains.items()):
+    for (faction, qid), lvl in sorted(chains.items()):
+        stepper.faction = faction
         order = stepper.chain(qid)
         steps, m = [], None
         for q in order:
@@ -670,11 +681,12 @@ def main():
             steps += st
             m = m or mm
         steps = merge_steps(steps)
-        chain_out[qid] = dict(lv=lvl, m=m, steps=steps, title=db['quest'][qid].get('title') or str(qid))
+        chain_out[(faction, qid)] = dict(faction=faction, lv=lvl, m=m, steps=steps, title=db['quest'][qid].get('title') or str(qid))
 
     # ---------------------------------------------------------------- dungeon runs
     dung_out = {}
     for (faction, zname), needs in sorted(dungeons.items()):
+        stepper.faction = faction
         side = 2 if faction == 'Horde' else 1
         lvl = dungeon_level.get(zname)
         qs = []
@@ -736,7 +748,7 @@ def main():
         s = e['src']
         if s['kind'] == 'quest':
             title = db['quest'][s['quest']]['title']
-            zn = s['dungeon'] or lev['zones'].get(s['zone'])
+            zn = s['dungeon']   # other quests: the step and its waypoint say where (givers can differ by faction)
             return 'Q: %s%s' % (title, (' (%s)' % zn) if zn else '')
         if s['kind'] == 'drop':
             return '%s, %s (%g%%)' % (lev['npcs'].get(s['npc'], db['npc'].get(s['npc'], 'boss')), s['dungeon'], s['pct'])
@@ -765,8 +777,8 @@ def main():
         lines.append('  [%d]=%s,' % (iid, lua_val(rec)))
     lines.append('})')
     lines.append('')
-    for qid, ch in chain_out.items():
-        head = {'lv': ch['lv'], 'title': ch['title']}
+    for (faction, qid), ch in chain_out.items():
+        head = {'faction': faction, 'lv': ch['lv'], 'title': ch['title']}
         if ch['m']:
             head['m'] = ch['m']
         lines.append('B:Chain(%d, %s, function() return {' % (qid, lua_val(head)))

@@ -3,9 +3,10 @@
 
 ForeverPlanner = ForeverPlanner or {}
 local FP = ForeverPlanner
-FP.version = "0.6.0"
+FP.version = "0.6.1"
 -- Shown once after an update (newest first). Keep each line short.
 FP.news = {
+  "Gear plan beside your character window: press C to see your planned item for every slot, with icons, where it comes from and whether you have it. Click one for a waypoint.",
   "Best-in-slot gear routes: your route now takes in the quests, quest chains and dungeons that give your spec's best gear at every level, and the Gear tab lists every pick with where it comes from (quest, boss drop or craft).",
   "Class quests you already have (Cure Poison, pets, forms) are no longer offered on the tracker.",
   "The route now follows you: a step finishes as soon as its quests are done, abandoned quests stop holding it up, and steps you've moved on from are skipped by themselves (/fp undo brings them back).",
@@ -1407,6 +1408,7 @@ local HELP = {
   "/fp talentglow - turn the talent screen highlight on or off",
   "/fp talentdebug - show what the addon sees on the talent screen",
   "/fp setup - choose your spec and options again",
+  "/fp gear - open your character window with the gear plan beside it (it opens there by itself)",
   "/fp undo - bring back the steps the route skipped when you moved on",
   "/fp follow - turn that automatic skipping off or on",
   "/fp side - class quests ready for your level; /fp side <n> adds one to your route",
@@ -1446,6 +1448,8 @@ SlashCmdList["FOREVERPLANNER"] = function(msg)
   elseif cmd == "sync" then FP:ImportHistory(true); FP:Refresh(false)
   elseif cmd == "setup" then if FP.ShowSetup then FP:ShowSetup() end
   elseif cmd == "undo" then FP:UndoFollow()
+  elseif cmd == "gear" then if FP.ShowGearPanel then FP:ShowGearPanel() end
+  elseif cmd == "geardebug" then if FP.GearDebug then FP:GearDebug() end
   elseif cmd == "follow" then
     FP.char.follow = (FP.char.follow == false)
     FP:Print(FP.char.follow and "The route follows you: steps you move on from are skipped on their own." or

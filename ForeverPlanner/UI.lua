@@ -462,6 +462,7 @@ local function GearList()
   local p = FP.plan
   local list = {}
   local lvl = FP:PlayerLevel()
+  list[#list + 1] = { text = GOLD .. "Easier view: press C. The gear plan opens beside your character window, with icons (or type /fp gear).|r" }
   local function stateIcon(name)
     local st = FP:ItemState(name)
     return (st == "equipped" and OK) or (st == "bags" and WAIT) or DOT
@@ -1054,4 +1055,387 @@ function FP:ShowSetup()
   y = y - 28
   setup:SetHeight(-y + 50)
   setup:Show()
+end
+
+------------------------------------------------------------------------
+-- Gear plan beside the character window (C): one row per slot for a level band, with the item's
+-- icon, where it comes from and whether you have it. Click a row for a waypoint to the step that
+-- gets it. The character window's own slots get a tick (your plan's pick is on) or an hourglass
+-- (an upgrade is planned), and their tooltips name the planned item.
+------------------------------------------------------------------------
+local SLOT_ORDER = { "Head", "Neck", "Shoulder", "Back", "Chest", "Wrist", "Hands", "Waist", "Legs", "Feet",
+  "Ring", "Trinket", "Weapon", "MainHand", "OffHand", "Ranged", "Wand", "Idol" }
+local SLOT_RANK = {}
+for i, s in ipairs(SLOT_ORDER) do SLOT_RANK[s] = i end
+local SLOT_LABEL = { MainHand = "Main hand", OffHand = "Off hand", Weapon = "Two-hand", Back = "Back" }
+-- Character window slot buttons for each inventory slot ID
+local SLOT_BUTTONS = {
+  [1] = "CharacterHeadSlot", [2] = "CharacterNeckSlot", [3] = "CharacterShoulderSlot", [15] = "CharacterBackSlot",
+  [5] = "CharacterChestSlot", [9] = "CharacterWristSlot", [10] = "CharacterHandsSlot", [6] = "CharacterWaistSlot",
+  [7] = "CharacterLegsSlot", [8] = "CharacterFeetSlot", [11] = "CharacterFinger0Slot", [12] = "CharacterFinger1Slot",
+  [13] = "CharacterTrinket0Slot", [14] = "CharacterTrinket1Slot", [16] = "CharacterMainHandSlot",
+  [17] = "CharacterSecondaryHandSlot", [18] = "CharacterRangedSlot",
+}
+local QUESTION = "Interface\\Icons\\INV_Misc_QuestionMark"
+local ROWS = 18
+
+local panel, toggleTab, markers = nil, nil, {}
+
+local function ItemIcon(id, name)
+  local icon
+  if id then
+    if C_Item and C_Item.GetItemIconByID then icon = C_Item.GetItemIconByID(id) end
+    if not icon and GetItemIcon then icon = GetItemIcon(id) end
+  end
+  if not icon and name and GetItemInfo then icon = select(10, GetItemInfo(name)) end
+  return icon or QUESTION
+end
+
+local function ItemColour(id, name)
+  local q
+  if id and C_Item and C_Item.GetItemQualityByID then q = C_Item.GetItemQualityByID(id) end
+  if not q and GetItemInfo then q = select(3, GetItemInfo(id or name)) end
+  if q and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[q] then
+    local c = ITEM_QUALITY_COLORS[q]
+    return c.r, c.g, c.b
+  end
+  if id and C_Item and C_Item.RequestLoadItemDataByID then pcall(C_Item.RequestLoadItemDataByID, id) end
+  return 1, 1, 1
+end
+
+local function SourceIcon(src)
+  if not src then return "" end
+  if src:find("^Q:") then return "|TInterface\\GossipFrame\\AvailableQuestIcon:12:12|t " end
+  if src:find("^Craft:") then return "|TInterface\\Icons\\Trade_Tailoring:12:12|t " end
+  return "|TInterface\\Icons\\INV_Misc_Bone_Skull_01:12:12|t "   -- boss drop
+end
+
+-- The band shown: the one you're in, unless you've paged to another.
+local function PanelBand()
+  local gear = FP.plan and FP.plan.gear
+  if not gear or #gear == 0 then return nil end
+  local idx = panel and panel.bandIdx
+  if not idx then
+    local lvl = FP:PlayerLevel()
+    idx = 1
+    for i, g in ipairs(gear) do if lvl >= g.from and lvl <= g.to then idx = i end end
+    if lvl > gear[#gear].to then idx = #gear end
+  end
+  return gear[idx], idx, #gear
+end
+
+local function SortedSlots(g)
+  local list = {}
+  for i, sl in ipairs(g.slots) do list[#list + 1] = { sl = sl, i = i } end
+  table.sort(list, function(a, b)
+    local ra, rb = SLOT_RANK[a.sl.slot] or 99, SLOT_RANK[b.sl.slot] or 99
+    if ra ~= rb then return ra < rb end
+    return a.i < b.i
+  end)
+  return list
+end
+
+local function RowState(sl)
+  local st = FP:ItemState(sl.best)
+  if st == "equipped" then return "worn" end
+  if st == "bags" then return "bags" end
+  if sl.alt and FP:ItemState(sl.alt) == "equipped" then return "alt" end
+  return "need"
+end
+
+local function MakeRow(i)
+  local r = CreateFrame("Button", nil, panel.body)
+  r:SetSize(276, 26)
+  r:SetPoint("TOPLEFT", 0, -(i - 1) * 27)
+  r:RegisterForClicks("LeftButtonUp")
+  local hl = r:CreateTexture(nil, "HIGHLIGHT")
+  hl:SetAllPoints()
+  hl:SetColorTexture(1, 1, 1, 0.08)
+  r.icon = r:CreateTexture(nil, "ARTWORK")
+  r.icon:SetSize(24, 24)
+  r.icon:SetPoint("LEFT", 2, 0)
+  r.state = r:CreateTexture(nil, "OVERLAY")
+  r.state:SetSize(14, 14)
+  r.state:SetPoint("BOTTOMRIGHT", r.icon, "BOTTOMRIGHT", 4, -3)
+  r.name = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  r.name:SetPoint("TOPLEFT", r.icon, "TOPRIGHT", 6, 0)
+  r.name:SetWidth(240)
+  r.name:SetJustifyH("LEFT")
+  r.name:SetWordWrap(false)
+  r.info = r:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  r.info:SetPoint("BOTTOMLEFT", r.icon, "BOTTOMRIGHT", 6, 0)
+  r.info:SetWidth(240)
+  r.info:SetJustifyH("LEFT")
+  r.info:SetWordWrap(false)
+  r:SetScript("OnClick", function(self)
+    local sl = self.sl
+    if not sl then return end
+    local key = (self.state.which == "need" or self.state.which == "alt") and (sl.step or sl.altstep) or sl.step
+    if key and FP:StepIndex(key) then
+      FP:ShowStep(key, true)
+      if FP.char and not FP.char.trackerShown then FP:ToggleTracker() end
+      local s = FP.plan.route[FP:StepIndex(key)]
+      FP:Print(("%s: step %s, %s (waypoint set)."):format(sl.best, s.num or key, s.title))
+    elseif sl.src then
+      FP:Print(("%s: %s"):format(sl.best, sl.src))
+    end
+  end)
+  r:SetScript("OnEnter", function(self)
+    local sl = self.sl
+    if not (sl and GameTooltip) then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    local ok = sl.id and pcall(GameTooltip.SetItemByID, GameTooltip, sl.id)
+    if not ok then GameTooltip:AddLine(sl.best, 1, 1, 1) end
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("Forever Planner: " .. (SLOT_LABEL[sl.slot] or sl.slot), 1, 0.82, 0)
+    if sl.src then GameTooltip:AddLine(sl.src, 1, 1, 1, true) end
+    local i = sl.step and FP:StepIndex(sl.step)
+    if i then GameTooltip:AddLine(("Route step %s (level %d): %s"):format(FP.plan.route[i].num or sl.step, FP.plan.route[i].lvl or 0, FP.plan.route[i].title), 0.7, 0.7, 0.7, true) end
+    if sl.alt then
+      GameTooltip:AddLine(("Second choice: %s"):format(sl.alt), 0.6, 0.8, 1, true)
+      if sl.altsrc then GameTooltip:AddLine(sl.altsrc, 0.6, 0.6, 0.6, true) end
+    end
+    GameTooltip:AddLine("Now: " .. FP:SlotNow(sl.slot), 0.7, 0.7, 0.7, true)
+    GameTooltip:AddLine("Click: waypoint to the step that gets it.", 0.4, 0.8, 1)
+    GameTooltip:Show()
+  end)
+  r:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+  return r
+end
+
+local function BuildGearPanel()
+  local parent = _G.CharacterFrame or UIParent
+  panel = CreateFrame("Frame", "ForeverPlannerGearPanel", parent)
+  panel:SetSize(292, 560)
+  Bg(panel, 0.85)
+  if parent ~= UIParent then
+    panel:SetPoint("TOPLEFT", parent, "TOPRIGHT", 2, 0)
+    panel:SetFrameStrata(parent:GetFrameStrata() or "MEDIUM")
+  else
+    panel:SetPoint("CENTER", 300, 0)
+    Movable(panel, "gearPanelPos")
+  end
+  panel.title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  panel.title:SetPoint("TOPLEFT", 10, -8)
+  panel.title:SetText("Gear plan")
+  panel.band = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  panel.band:SetPoint("TOP", 0, -28)
+  panel.prev = Button(panel, "<", 24, 18, function()
+    local _, idx = PanelBand(); if idx and idx > 1 then panel.bandIdx = idx - 1; FP:UpdateGearPanel() end
+  end)
+  panel.prev:SetPoint("TOPLEFT", 8, -25)
+  panel.next = Button(panel, ">", 24, 18, function()
+    local _, idx, n = PanelBand(); if idx and idx < n then panel.bandIdx = idx + 1; FP:UpdateGearPanel() end
+  end)
+  panel.next:SetPoint("TOPRIGHT", -8, -25)
+  panel.count = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  panel.count:SetPoint("TOP", panel.band, "BOTTOM", 0, -3)
+  panel.body = CreateFrame("Frame", nil, panel)
+  panel.body:SetPoint("TOPLEFT", 8, -64)
+  panel.body:SetSize(276, ROWS * 27)
+  panel.rows = {}
+  for i = 1, ROWS do panel.rows[i] = MakeRow(i) end
+  panel.empty = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  panel.empty:SetPoint("TOPLEFT", 10, -70)
+  panel.empty:SetWidth(272)
+  panel.empty:SetJustifyH("LEFT")
+  panel.foot = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  panel.foot:SetPoint("BOTTOMLEFT", 10, 8)
+  panel.foot:SetWidth(272)
+  panel.foot:SetJustifyH("LEFT")
+  panel.foot:SetText("|TInterface\\RaidFrame\\ReadyCheck-Ready:12:12|t on  |TInterface\\RaidFrame\\ReadyCheck-Waiting:12:12|t to get  "
+    .. "|TInterface\\GossipFrame\\AvailableQuestIcon:12:12|t quest  |TInterface\\Icons\\INV_Misc_Bone_Skull_01:12:12|t boss  "
+    .. "|TInterface\\Icons\\Trade_Tailoring:12:12|t craft")
+  local close = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
+  close:SetPoint("TOPRIGHT", 2, 2)
+  close:SetScript("OnClick", function() FP.char.gearPanel = false; panel:Hide(); FP:UpdateGearToggle() end)
+  panel:Hide()
+
+  if parent ~= UIParent then
+    -- A small tab on the character window turns the panel on and off.
+    toggleTab = CreateFrame("Button", "ForeverPlannerGearToggle", parent, "UIPanelButtonTemplate")
+    toggleTab:SetSize(92, 20)
+    toggleTab:SetPoint("BOTTOMRIGHT", parent, "TOPRIGHT", 0, 2)
+    toggleTab:SetScript("OnClick", function()
+      FP.char.gearPanel = not panel:IsShown()
+      if FP.char.gearPanel then panel:Show(); FP:UpdateGearPanel() else panel:Hide() end
+      FP:UpdateGearToggle()
+    end)
+    parent:HookScript("OnShow", function()
+      if FP.char and FP.char.gearPanel ~= false and FP.plan then panel.bandIdx = nil; panel:Show(); FP:UpdateGearPanel() end
+      FP:UpdateGearToggle()
+      FP:UpdateSlotMarkers()
+    end)
+    parent:HookScript("OnHide", function() panel:Hide() end)
+  end
+end
+
+function FP:UpdateGearToggle()
+  if toggleTab then toggleTab:SetText(panel:IsShown() and "Hide gear plan" or "Gear plan") end
+end
+
+function FP:UpdateGearPanel()
+  if not panel or not panel:IsShown() then return end
+  local g, idx, n = PanelBand()
+  panel.title:SetText("Gear plan" .. (self.plan and self.plan.name and (": " .. self.plan.name) or ""))
+  for _, r in ipairs(panel.rows) do r:Hide(); r.sl = nil end
+  if not g then
+    panel.band:SetText("")
+    panel.count:SetText("")
+    panel.empty:SetText("No gear plan for this character yet.")
+    panel.empty:Show()
+    panel.prev:Hide(); panel.next:Hide()
+    return
+  end
+  panel.empty:Hide()
+  panel.prev:Show(); panel.next:Show()
+  panel.prev:SetEnabled(idx > 1)
+  panel.next:SetEnabled(idx < n)
+  local lvl = self:PlayerLevel()
+  local here = lvl >= g.from and lvl <= g.to
+  panel.band:SetText(g.label .. (here and "  |cff00ff00(you're here)|r" or ""))
+  local worn = 0
+  for k, e in ipairs(SortedSlots(g)) do
+    local r = panel.rows[k]
+    if not r then break end
+    local sl = e.sl
+    r.sl = sl
+    r.icon:SetTexture(ItemIcon(sl.id, sl.best))
+    local cr, cg, cb = ItemColour(sl.id, sl.best)
+    r.name:SetText(sl.best)
+    r.name:SetTextColor(cr, cg, cb)
+    local st = RowState(sl)
+    r.state.which = st
+    local info
+    if st == "worn" then
+      worn = worn + 1
+      r.state:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
+      info = "|cff00ff00Wearing it|r"
+    elseif st == "bags" then
+      r.state:SetTexture("Interface\\RaidFrame\\ReadyCheck-Waiting")
+      info = "|cffffd100In your bags: equip it|r"
+    else
+      r.state:SetTexture("Interface\\RaidFrame\\ReadyCheck-Waiting")
+      local i = sl.step and self:StepIndex(sl.step)
+      local stepTxt = i and (" |cff808080step %s, lvl %d|r"):format(self.plan.route[i].num or sl.step, self.plan.route[i].lvl or 0) or ""
+      info = SourceIcon(sl.src) .. (sl.src or "") .. stepTxt
+      if st == "alt" then info = "|cff9999ffWearing the second choice.|r " .. info end
+    end
+    r.info:SetText(("%s%s|r  %s"):format(GREY, SLOT_LABEL[sl.slot] or sl.slot, info))
+    r:Show()
+  end
+  panel.count:SetText(("%d of %d planned items on"):format(worn, #g.slots))
+  self:UpdateSlotMarkers()
+end
+
+-- Ticks and hourglasses on the character window's own slots, for the band you're in.
+function FP:UpdateSlotMarkers()
+  if not (_G.CharacterFrame and self.plan and self.plan.gear) then return end
+  local g = self:GearBracket()
+  local want = {}
+  if g then
+    local used = {}
+    for _, e in ipairs(SortedSlots(g)) do
+      local ids = FP.SLOT_IDS[e.sl.slot] or {}
+      local inv = ids[1]
+      if #ids > 1 and e.sl.slot ~= "Weapon" then
+        for _, id in ipairs(ids) do if not used[id] then inv = id; break end end
+      end
+      if inv then used[inv] = true; want[inv] = e.sl end
+    end
+  end
+  for inv, bname in pairs(SLOT_BUTTONS) do
+    local b = _G[bname]
+    if b then
+      local m = markers[inv]
+      if not m then
+        m = b:CreateTexture(nil, "OVERLAY", nil, 7)
+        m:SetSize(16, 16)
+        m:SetPoint("TOPRIGHT", b, "TOPRIGHT", 2, 2)
+        markers[inv] = m
+      end
+      local sl = want[inv]
+      if sl and self.char.gearPanel ~= false then
+        m:SetTexture(RowState(sl) == "worn" and "Interface\\RaidFrame\\ReadyCheck-Ready" or "Interface\\RaidFrame\\ReadyCheck-Waiting")
+        m:Show()
+      else
+        m:Hide()
+      end
+    end
+  end
+end
+
+-- Hovering a slot on the character window: name the planned item for it.
+local tooltipHooked = false
+local function HookSlotTooltips()
+  if tooltipHooked or not (GameTooltip and hooksecurefunc) then return end
+  tooltipHooked = true
+  hooksecurefunc(GameTooltip, "SetInventoryItem", function(tt, unit, inv)
+    if unit ~= "player" or not (FP.plan and FP.plan.gear) then return end
+    local g = FP:GearBracket()
+    if not g then return end
+    local slotName
+    for name, ids in pairs(FP.SLOT_IDS) do
+      for _, id in ipairs(ids) do if id == inv then slotName = slotName or name end end
+    end
+    for _, sl in ipairs(g.slots) do
+      local ids = FP.SLOT_IDS[sl.slot] or {}
+      local match = false
+      for _, id in ipairs(ids) do if id == inv then match = true end end
+      if match then
+        if FP:ItemState(sl.best) == "equipped" then
+          tt:AddLine("Forever Planner: " .. sl.best .. " is your plan's pick", 0, 1, 0)
+        else
+          tt:AddLine("Forever Planner: plan wants " .. sl.best, 1, 0.82, 0)
+          if sl.src then tt:AddLine(sl.src, 0.8, 0.8, 0.8, true) end
+        end
+        tt:Show()
+        return
+      end
+    end
+  end)
+end
+
+local gearEvents = CreateFrame("Frame")
+for _, e in ipairs({ "PLAYER_LOGIN", "PLAYER_EQUIPMENT_CHANGED", "BAG_UPDATE_DELAYED", "GET_ITEM_INFO_RECEIVED", "PLAYER_LEVEL_UP" }) do
+  gearEvents:RegisterEvent(e)
+end
+gearEvents:SetScript("OnEvent", function(_, event)
+  if event == "PLAYER_LOGIN" then
+    if C_Timer and C_Timer.After then
+      C_Timer.After(1, function() if not panel then BuildGearPanel() end HookSlotTooltips() end)
+    else
+      BuildGearPanel(); HookSlotTooltips()
+    end
+    return
+  end
+  if panel and panel:IsShown() then
+    if event == "PLAYER_LEVEL_UP" then panel.bandIdx = nil end
+    FP:UpdateGearPanel()
+  elseif _G.CharacterFrame and _G.CharacterFrame:IsShown() then
+    FP:UpdateSlotMarkers()
+  end
+end)
+
+-- /fp gear: open the character window with the gear plan beside it.
+function FP:ShowGearPanel()
+  if not panel then BuildGearPanel() end
+  self.char.gearPanel = true
+  if _G.CharacterFrame then
+    if not _G.CharacterFrame:IsShown() then
+      if ToggleCharacter then ToggleCharacter("PaperDollFrame") else ShowUIPanel(_G.CharacterFrame) end
+    end
+  end
+  panel.bandIdx = nil
+  panel:Show()
+  self:UpdateGearPanel()
+  self:UpdateGearToggle()
+end
+
+function FP:GearDebug()
+  self:Print(("Character window: %s. Gear panel: %s. Plan bands: %d."):format(_G.CharacterFrame and "found" or "not found",
+    panel and (panel:IsShown() and "shown" or "hidden") or "not built", self.plan and self.plan.gear and #self.plan.gear or 0))
+  local missing = {}
+  for _, n in pairs(SLOT_BUTTONS) do if not _G[n] then missing[#missing + 1] = n end end
+  self:Print(#missing == 0 and "All character slot buttons found." or ("Slot buttons not found: " .. table.concat(missing, ", ")))
 end

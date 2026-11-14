@@ -33,7 +33,10 @@ FP.bisItems, FP.bisChains, FP.bisDungeons, FP.bisPlans = {}, {}, {}, {}
 local B = {}
 function FP:BiSData() return B end
 function B:Items(t) for id, rec in pairs(t) do FP.bisItems[id] = rec end end
-function B:Chain(qid, head, fn) head.id = "bis/q" .. qid; head.fn = fn; head.quest = qid; FP.bisChains[qid] = head end
+function B:Chain(qid, head, fn)
+  head.id = "bis/q" .. qid; head.fn = fn; head.quest = qid
+  FP.bisChains[(head.faction or "") .. ":" .. qid] = head
+end
 function B:Dungeon(head, fn)
   head.fn = fn
   head.key = head.faction .. ":" .. head.id
@@ -284,6 +287,16 @@ function FP:BuildPlan()
   plan.route = route
   plan.routeChain = names
   if bis then plan.gear = self:GearFromBiS(bis, route, questSteps); plan.gearSource = "bis" end
+  -- Item IDs for icons and tooltips (class files that name items get them from tools/map_item_ids.py)
+  local ids = legacy and legacy.itemIds
+  if ids and plan.gear then
+    for _, g in ipairs(plan.gear) do
+      for _, sl in ipairs(g.slots) do
+        sl.id = sl.id or (sl.best and ids[Norm(sl.best)])
+        sl.altid = sl.altid or (sl.alt and ids[Norm(sl.alt)])
+      end
+    end
+  end
 
   local specName = (legacy and legacy.name) or spec.name or (build and build.spec) or ""
   plan.name = legacy and legacy.name or ((specName ~= "" and (specName .. " ") or "") .. (self.className or self.class or ""))
@@ -336,7 +349,7 @@ function FP:InsertGearRoute(route, bands)
           if dg and wantDungeons and not seen[dg.key] then seen[dg.key] = true; dungeons[#dungeons + 1] = dg end
         elseif it.q and not done[it.q] and not seen[it.q] then
           seen[it.q] = true
-          local ch = self.bisChains[it.q]
+          local ch = self.bisChains[(self.faction or "") .. ":" .. it.q]
           if ch then chains[#chains + 1] = ch end
         end
       end
@@ -405,10 +418,10 @@ function FP:GearFromBiS(bands, route, questSteps)
     for _, e in ipairs(band[3]) do
       local name, src, step = info(e[2])
       if name then
-        local sl = { slot = e[1], best = name, src = src, step = step }
+        local sl = { slot = e[1], best = name, src = src, step = step, id = e[2] }
         if e[3] then
           local an, asrc, astep = info(e[3])
-          sl.alt, sl.altsrc, sl.altstep = an, asrc, astep
+          sl.alt, sl.altsrc, sl.altstep, sl.altid = an, asrc, astep, e[3]
         end
         g.slots[#g.slots + 1] = sl
       end
