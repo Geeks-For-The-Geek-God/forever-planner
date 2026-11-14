@@ -61,15 +61,16 @@ first = run("local r = ForeverPlannerGearPanel.rows[1]; return r.sl.slot .. '|' 
 print("   first row:", first)
 check(run("""local order = {} for _, r in ipairs(ForeverPlannerGearPanel.rows) do if r.shown and r.sl then order[#order+1] = r.sl.slot end end
   return order[1] ~= 'Ranged' and order[#order] ~= 'Head'"""), "rows in character-window order (head first, ranged last)")
-info = run("for _, r in ipairs(ForeverPlannerGearPanel.rows) do if r.shown and r.sl and r.sl.step then return r.info.text end end")
-check(info and "step" in info, "row says where it comes from and the step: " + str(info))
+info = run("for _, r in ipairs(ForeverPlannerGearPanel.rows) do if r.shown and r.sl and r.sl.step then return r.info.text .. ' || ' .. r.step.text end end")
+check(info and "step" in info and "Q: " not in info, "row says where it comes from (short) and the step on the right: " + str(info))
 
 # equip a planned item: the row ticks and the count goes up
 name = run("return ForeverPlannerGearPanel.rows[1].sl.best")
 inv = run("local FP=ForeverPlanner; return FP.SLOT_IDS[ForeverPlannerGearPanel.rows[1].sl.slot][1]")
 run('EQUIPPED[%d] = "|cff0070dd|Hitem:1:0|h[%s]|h|r"; FireEvent("PLAYER_EQUIPMENT_CHANGED")' % (inv, name.replace('"', '\\"')))
+print("   ", run("return ForeverPlannerGearPanel.rows[1].info.text"), run("return ForeverPlannerGearPanel.rows[1].sl.best"), run("return EQUIPPED[2]"))
 check("Wearing it" in run("return ForeverPlannerGearPanel.rows[1].info.text"), "equipped pick shows 'Wearing it'")
-check(run("return ForeverPlannerGearPanel.count.text").startswith("1 of"), "count of planned items on: " + run("return ForeverPlannerGearPanel.count.text"))
+check(run("return ForeverPlannerGearPanel.count.text").startswith("Wearing 1 of"), "count of planned items on: " + run("return ForeverPlannerGearPanel.count.text"))
 
 # clicking a row sets a waypoint to its step and shows it on the tracker
 k = run("for i, r in ipairs(ForeverPlannerGearPanel.rows) do if r.shown and r.sl and r.sl.step and r.state.which ~= 'worn' then return i end end")

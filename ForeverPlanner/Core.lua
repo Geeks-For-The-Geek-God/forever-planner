@@ -3,9 +3,10 @@
 
 ForeverPlanner = ForeverPlanner or {}
 local FP = ForeverPlanner
-FP.version = "0.6.1"
+FP.version = "0.6.2"
 -- Shown once after an update (newest first). Keep each line short.
 FP.news = {
+  "Tidier gear panel: one clean row per slot, short sources, the step on the right, and only slots with an upgrade to get are marked on the character window.",
   "Gear plan beside your character window: press C to see your planned item for every slot, with icons, where it comes from and whether you have it. Click one for a waypoint.",
   "Best-in-slot gear routes: your route now takes in the quests, quest chains and dungeons that give your spec's best gear at every level, and the Gear tab lists every pick with where it comes from (quest, boss drop or craft).",
   "Class quests you already have (Cure Poison, pets, forms) are no longer offered on the tracker.",

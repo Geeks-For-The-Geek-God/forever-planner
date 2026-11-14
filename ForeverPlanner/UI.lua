@@ -1143,28 +1143,59 @@ local function RowState(sl)
   return "need"
 end
 
+local ROW_H, PANEL_W = 31, 300
+local SHORT = { ["Wailing Caverns"] = "WC", ["The Deadmines"] = "Deadmines", ["Shadowfang Keep"] = "SFK", ["Blackfathom Deeps"] = "BFD",
+  ["Razorfen Kraul"] = "RFK", ["Razorfen Downs"] = "RFD", ["Scarlet Monastery"] = "SM", ["Ragefire Chasm"] = "RFC",
+  ["Blackrock Spire"] = "BRS", ["Blackrock Depths"] = "BRD", ["Excavation Site"] = "Excavation Site", ["Zul'Farrak"] = "ZF" }
+
+-- A short "where from" for the row; the tooltip has the full text.
+local function ShortSource(src)
+  if not src then return "" end
+  local s = src:gsub("^Q: ", ""):gsub(" %(or the Auction House%)", ""):gsub("^Craft: ", "")
+  for long, short in pairs(SHORT) do s = s:gsub(long, short) end
+  return s
+end
+
+local function Border(f)
+  for _, side in ipairs({ "TOP", "BOTTOM", "LEFT", "RIGHT" }) do
+    local t = f:CreateTexture(nil, "BORDER")
+    t:SetColorTexture(0.35, 0.35, 0.35, 0.9)
+    if side == "TOP" or side == "BOTTOM" then
+      t:SetPoint(side .. "LEFT"); t:SetPoint(side .. "RIGHT"); t:SetHeight(1)
+    else
+      t:SetPoint("TOP" .. side); t:SetPoint("BOTTOM" .. side); t:SetWidth(1)
+    end
+  end
+end
+
 local function MakeRow(i)
   local r = CreateFrame("Button", nil, panel.body)
-  r:SetSize(276, 26)
-  r:SetPoint("TOPLEFT", 0, -(i - 1) * 27)
+  r:SetSize(PANEL_W - 16, ROW_H - 2)
+  r:SetPoint("TOPLEFT", 0, -(i - 1) * ROW_H)
   r:RegisterForClicks("LeftButtonUp")
   local hl = r:CreateTexture(nil, "HIGHLIGHT")
   hl:SetAllPoints()
   hl:SetColorTexture(1, 1, 1, 0.08)
+  r.stripe = r:CreateTexture(nil, "BACKGROUND")
+  r.stripe:SetAllPoints()
+  r.stripe:SetColorTexture(1, 1, 1, (i % 2 == 0) and 0.03 or 0)
   r.icon = r:CreateTexture(nil, "ARTWORK")
-  r.icon:SetSize(24, 24)
+  r.icon:SetSize(ROW_H - 6, ROW_H - 6)
   r.icon:SetPoint("LEFT", 2, 0)
   r.state = r:CreateTexture(nil, "OVERLAY")
-  r.state:SetSize(14, 14)
-  r.state:SetPoint("BOTTOMRIGHT", r.icon, "BOTTOMRIGHT", 4, -3)
+  r.state:SetSize(13, 13)
+  r.state:SetPoint("BOTTOMRIGHT", r.icon, "BOTTOMRIGHT", 3, -2)
+  r.step = r:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  r.step:SetPoint("TOPRIGHT", -2, -3)
+  r.step:SetJustifyH("RIGHT")
   r.name = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  r.name:SetPoint("TOPLEFT", r.icon, "TOPRIGHT", 6, 0)
-  r.name:SetWidth(240)
+  r.name:SetPoint("TOPLEFT", r.icon, "TOPRIGHT", 6, -1)
+  r.name:SetPoint("RIGHT", r.step, "LEFT", -4, 0)
   r.name:SetJustifyH("LEFT")
   r.name:SetWordWrap(false)
   r.info = r:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  r.info:SetPoint("BOTTOMLEFT", r.icon, "BOTTOMRIGHT", 6, 0)
-  r.info:SetWidth(240)
+  r.info:SetPoint("BOTTOMLEFT", r.icon, "BOTTOMRIGHT", 6, 1)
+  r.info:SetPoint("RIGHT", -2, 0)
   r.info:SetJustifyH("LEFT")
   r.info:SetWordWrap(false)
   r:SetScript("OnClick", function(self)
@@ -1206,10 +1237,11 @@ end
 local function BuildGearPanel()
   local parent = _G.CharacterFrame or UIParent
   panel = CreateFrame("Frame", "ForeverPlannerGearPanel", parent)
-  panel:SetSize(292, 560)
-  Bg(panel, 0.85)
+  panel:SetSize(PANEL_W, 120)
+  Bg(panel, 0.88)
+  Border(panel)
   if parent ~= UIParent then
-    panel:SetPoint("TOPLEFT", parent, "TOPRIGHT", 2, 0)
+    panel:SetPoint("TOPLEFT", parent, "TOPRIGHT", 4, 0)
     panel:SetFrameStrata(parent:GetFrameStrata() or "MEDIUM")
   else
     panel:SetPoint("CENTER", 300, 0)
@@ -1218,48 +1250,65 @@ local function BuildGearPanel()
   panel.title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   panel.title:SetPoint("TOPLEFT", 10, -8)
   panel.title:SetText("Gear plan")
-  panel.band = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  panel.band:SetPoint("TOP", 0, -28)
-  panel.prev = Button(panel, "<", 24, 18, function()
+  panel.spec = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  panel.spec:SetPoint("LEFT", panel.title, "RIGHT", 6, 0)
+  panel.spec:SetPoint("RIGHT", panel, "TOPRIGHT", -28, -16)
+  panel.spec:SetJustifyH("LEFT")
+  panel.spec:SetWordWrap(false)
+  panel.prev = Button(panel, "<", 22, 18, function()
     local _, idx = PanelBand(); if idx and idx > 1 then panel.bandIdx = idx - 1; FP:UpdateGearPanel() end
   end)
-  panel.prev:SetPoint("TOPLEFT", 8, -25)
-  panel.next = Button(panel, ">", 24, 18, function()
+  panel.prev:SetPoint("TOPLEFT", 8, -30)
+  panel.next = Button(panel, ">", 22, 18, function()
     local _, idx, n = PanelBand(); if idx and idx < n then panel.bandIdx = idx + 1; FP:UpdateGearPanel() end
   end)
-  panel.next:SetPoint("TOPRIGHT", -8, -25)
+  panel.next:SetPoint("TOPRIGHT", -8, -30)
+  -- band name between the arrows; the band's full note shows on hover
+  local bandBtn = CreateFrame("Button", nil, panel)
+  bandBtn:SetPoint("LEFT", panel.prev, "RIGHT", 4, 0)
+  bandBtn:SetPoint("RIGHT", panel.next, "LEFT", -4, 0)
+  bandBtn:SetHeight(18)
+  panel.band = bandBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  panel.band:SetAllPoints()
+  panel.band:SetJustifyH("CENTER")
+  panel.band:SetWordWrap(false)
+  bandBtn:SetScript("OnEnter", function(self)
+    if not (GameTooltip and self.note) then return end
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:AddLine(self.note, 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  bandBtn:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+  panel.bandBtn = bandBtn
   panel.count = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  panel.count:SetPoint("TOP", panel.band, "BOTTOM", 0, -3)
+  panel.count:SetPoint("TOP", 0, -52)
   panel.body = CreateFrame("Frame", nil, panel)
-  panel.body:SetPoint("TOPLEFT", 8, -64)
-  panel.body:SetSize(276, ROWS * 27)
+  panel.body:SetPoint("TOPLEFT", 8, -68)
+  panel.body:SetSize(PANEL_W - 16, ROWS * ROW_H)
   panel.rows = {}
   for i = 1, ROWS do panel.rows[i] = MakeRow(i) end
   panel.empty = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   panel.empty:SetPoint("TOPLEFT", 10, -70)
-  panel.empty:SetWidth(272)
+  panel.empty:SetWidth(PANEL_W - 20)
   panel.empty:SetJustifyH("LEFT")
   panel.foot = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  panel.foot:SetPoint("BOTTOMLEFT", 10, 8)
-  panel.foot:SetWidth(272)
-  panel.foot:SetJustifyH("LEFT")
-  panel.foot:SetText("|TInterface\\RaidFrame\\ReadyCheck-Ready:12:12|t on  |TInterface\\RaidFrame\\ReadyCheck-Waiting:12:12|t to get  "
-    .. "|TInterface\\GossipFrame\\AvailableQuestIcon:12:12|t quest  |TInterface\\Icons\\INV_Misc_Bone_Skull_01:12:12|t boss  "
-    .. "|TInterface\\Icons\\Trade_Tailoring:12:12|t craft")
+  panel.foot:SetPoint("BOTTOM", 0, 7)
+  panel.foot:SetText("|TInterface\\RaidFrame\\ReadyCheck-Ready:12:12|t wearing   |TInterface\\RaidFrame\\ReadyCheck-Waiting:12:12|t to get   Click a row for a waypoint")
   local close = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", 2, 2)
-  close:SetScript("OnClick", function() FP.char.gearPanel = false; panel:Hide(); FP:UpdateGearToggle() end)
+  close:SetScript("OnClick", function() FP.char.gearPanel = false; panel:Hide(); FP:UpdateGearToggle(); FP:UpdateSlotMarkers() end)
   panel:Hide()
 
   if parent ~= UIParent then
-    -- A small tab on the character window turns the panel on and off.
+    -- A small button on the character window turns the panel on and off.
     toggleTab = CreateFrame("Button", "ForeverPlannerGearToggle", parent, "UIPanelButtonTemplate")
-    toggleTab:SetSize(92, 20)
-    toggleTab:SetPoint("BOTTOMRIGHT", parent, "TOPRIGHT", 0, 2)
+    toggleTab:SetSize(110, 20)
+    toggleTab:SetPoint("BOTTOMLEFT", panel, "TOPLEFT", 0, 2)
     toggleTab:SetScript("OnClick", function()
       FP.char.gearPanel = not panel:IsShown()
       if FP.char.gearPanel then panel:Show(); FP:UpdateGearPanel() else panel:Hide() end
       FP:UpdateGearToggle()
+      FP:UpdateSlotMarkers()
     end)
     parent:HookScript("OnShow", function()
       if FP.char and FP.char.gearPanel ~= false and FP.plan then panel.bandIdx = nil; panel:Show(); FP:UpdateGearPanel() end
@@ -1271,13 +1320,13 @@ local function BuildGearPanel()
 end
 
 function FP:UpdateGearToggle()
-  if toggleTab then toggleTab:SetText(panel:IsShown() and "Hide gear plan" or "Gear plan") end
+  if toggleTab then toggleTab:SetText(panel:IsShown() and "Hide gear plan" or "Show gear plan") end
 end
 
 function FP:UpdateGearPanel()
   if not panel or not panel:IsShown() then return end
   local g, idx, n = PanelBand()
-  panel.title:SetText("Gear plan" .. (self.plan and self.plan.name and (": " .. self.plan.name) or ""))
+  panel.spec:SetText(self.plan and self.plan.name or "")
   for _, r in ipairs(panel.rows) do r:Hide(); r.sl = nil end
   if not g then
     panel.band:SetText("")
@@ -1285,6 +1334,7 @@ function FP:UpdateGearPanel()
     panel.empty:SetText("No gear plan for this character yet.")
     panel.empty:Show()
     panel.prev:Hide(); panel.next:Hide()
+    panel:SetHeight(110)
     return
   end
   panel.empty:Hide()
@@ -1293,12 +1343,15 @@ function FP:UpdateGearPanel()
   panel.next:SetEnabled(idx < n)
   local lvl = self:PlayerLevel()
   local here = lvl >= g.from and lvl <= g.to
-  panel.band:SetText(g.label .. (here and "  |cff00ff00(you're here)|r" or ""))
-  local worn = 0
+  local short = (g.from == g.to) and ("Level " .. g.from) or ("Levels %d-%d"):format(g.from, g.to)
+  panel.band:SetText(short .. (here and "  |cff00ff00you're here|r" or ""))
+  panel.bandBtn.note = (g.label and g.label ~= short) and g.label or nil
+  local worn, rows = 0, 0
   for k, e in ipairs(SortedSlots(g)) do
     local r = panel.rows[k]
     if not r then break end
     local sl = e.sl
+    rows = k
     r.sl = sl
     r.icon:SetTexture(ItemIcon(sl.id, sl.best))
     local cr, cg, cb = ItemColour(sl.id, sl.best)
@@ -1306,29 +1359,33 @@ function FP:UpdateGearPanel()
     r.name:SetTextColor(cr, cg, cb)
     local st = RowState(sl)
     r.state.which = st
-    local info
+    local label = GREY .. (SLOT_LABEL[sl.slot] or sl.slot) .. "|r  "
+    local i = sl.step and self:StepIndex(sl.step)
     if st == "worn" then
       worn = worn + 1
       r.state:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
-      info = "|cff00ff00Wearing it|r"
-    elseif st == "bags" then
-      r.state:SetTexture("Interface\\RaidFrame\\ReadyCheck-Waiting")
-      info = "|cffffd100In your bags: equip it|r"
+      r.info:SetText(label .. "|cff00ff00Wearing it|r")
+      r.step:SetText("")
+      r.icon:SetDesaturated(false)
     else
       r.state:SetTexture("Interface\\RaidFrame\\ReadyCheck-Waiting")
-      local i = sl.step and self:StepIndex(sl.step)
-      local stepTxt = i and (" |cff808080step %s, lvl %d|r"):format(self.plan.route[i].num or sl.step, self.plan.route[i].lvl or 0) or ""
-      info = SourceIcon(sl.src) .. (sl.src or "") .. stepTxt
-      if st == "alt" then info = "|cff9999ffWearing the second choice.|r " .. info end
+      if st == "bags" then
+        r.info:SetText(label .. "|cffffd100In your bags: equip it|r")
+        r.step:SetText("")
+      else
+        r.info:SetText(label .. (st == "alt" and "|cff9999ff2nd choice on.|r " or "") .. ShortSource(sl.src))
+        r.step:SetText(i and ("step %s"):format(self.plan.route[i].num or sl.step) or "")
+      end
+      r.icon:SetDesaturated(st ~= "bags")
     end
-    r.info:SetText(("%s%s|r  %s"):format(GREY, SLOT_LABEL[sl.slot] or sl.slot, info))
     r:Show()
   end
-  panel.count:SetText(("%d of %d planned items on"):format(worn, #g.slots))
+  panel.count:SetText(("Wearing %d of %d planned items"):format(worn, #g.slots))
+  panel:SetHeight(68 + rows * ROW_H + 24)
   self:UpdateSlotMarkers()
 end
 
--- Ticks and hourglasses on the character window's own slots, for the band you're in.
+-- A small hourglass on the character window's slots where your plan has an upgrade for the band you're in.
 function FP:UpdateSlotMarkers()
   if not (_G.CharacterFrame and self.plan and self.plan.gear) then return end
   local g = self:GearBracket()
@@ -1350,17 +1407,13 @@ function FP:UpdateSlotMarkers()
       local m = markers[inv]
       if not m then
         m = b:CreateTexture(nil, "OVERLAY", nil, 7)
-        m:SetSize(16, 16)
-        m:SetPoint("TOPRIGHT", b, "TOPRIGHT", 2, 2)
+        m:SetSize(13, 13)
+        m:SetPoint("TOPLEFT", b, "TOPLEFT", 1, -1)
+        m:SetTexture("Interface\\RaidFrame\\ReadyCheck-Waiting")
         markers[inv] = m
       end
       local sl = want[inv]
-      if sl and self.char.gearPanel ~= false then
-        m:SetTexture(RowState(sl) == "worn" and "Interface\\RaidFrame\\ReadyCheck-Ready" or "Interface\\RaidFrame\\ReadyCheck-Waiting")
-        m:Show()
-      else
-        m:Hide()
-      end
+      if sl and self.char.gearPanel ~= false and RowState(sl) ~= "worn" then m:Show() else m:Hide() end
     end
   end
 end
