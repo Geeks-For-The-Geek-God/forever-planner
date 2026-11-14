@@ -1,10 +1,15 @@
-## Forever Planner 0.6.2: tidier gear panel
+## Forever Planner 0.6.3: Craft now
 
 `/reload` after the updater installs it.
 
-- Rows no longer run into each other: they're taller, alternate in shade, and long text is cut short instead of spilling. The full details are in the row's tooltip.
-- Each row shows the item name with the route step on the right, and below it the slot and a short source ("WC, Lady Anacondra", "Friend of the Library", "Tailoring 150").
-- Items you don't have yet are greyed until you get them. Ones in your bags say "In your bags: equip it".
-- The header fits the panel: "Gear plan" with your spec beside it, and the level band between the < > buttons. A band's long note (the Druid plan has them) shows when you hover the band name.
-- The panel has a border and sits a little further from the character window. Its height fits the number of rows.
-- On the character window, only slots with an upgrade still to get are marked, with a small hourglass in the top-left corner. The green ticks are gone.
+- The gear panel beside your character window has a second tab, **Craft now**. It lists, for each slot, the best piece your professions can make right now that beats what you're wearing. It's a backup until you get the plan's pick.
+- Each row shows the item, the slot, the profession and skill it needs, what it beats, and a status on the right:
+  - **craft it**: you know the recipe.
+  - **recipe?**: open your profession window once so the addon can see which recipes you know.
+  - **learn recipe**: your profession window doesn't list it (trainer, vendor or drop).
+  - **N points to go**: the next recipe worth skilling up for, if it's within 50 points.
+  - **in bags**: you've already made one, so equip it.
+- The tab's label counts the backups you can make, e.g. "Craft now (3)". On the Gear plan tab, a small anvil on a row's icon means there's a backup for that slot. Hover it to see which one.
+- The addon reads your profession skill by itself. It remembers your recipes whenever you open your profession window.
+- Slots where you already wear the plan's pick are left alone. The panel follows the plan's weapon choice (two-hander, or main hand and off hand).
+- Covers Leatherworking, Tailoring, Blacksmithing and Engineering, and Enchanting's wands, staves and off-hands, for every class and spec.

@@ -89,6 +89,7 @@ MIN_SCORE = 1.0          # ignore items whose stats barely count for the spec (o
 MIN_DROP_PCT = 5.0       # rarer boss drops aren't worth planning around
 DETOUR_GAIN = 1.10       # a quest off the route must beat the best on-route choice by 10%
 CRAFT_GAIN = 1.10        # a crafted item must beat the best quest/drop choice by 10% to be the main pick
+CRAFT_KEEP = 6           # per slot, band and profession: the most "craft now" candidates kept
 
 
 def dungeon_of_area(area, zones):
@@ -350,6 +351,67 @@ class Sources:
                 out.append(dict(kind='craft', spell=int(m.group(1)), prof=self.profs[int(m.group(2)) - 1],
                                 skill=int(m.group(3))))
         return out
+
+
+# --------------------------------------------------------------------------- craft-now backups
+
+
+def craft_items(items, lev, cls):
+    """Crafted items the class can wear -> list of (id, item, wear level, profession, skill, spell)."""
+    out = []
+    for iid, s in lev['src'].items():
+        it = items.get(iid)
+        if not it:
+            continue
+        for tok in s.split():
+            m = re.match(r'c(\d+)p(\d+)s(\d+)$', tok)
+            if not m:
+                continue
+            lvl = usable_level(it, cls)
+            if lvl is None:
+                break
+            out.append((iid, it, lvl, lev['professions'][int(m.group(2)) - 1], int(m.group(3)), int(m.group(1))))
+            break
+    return out
+
+
+def craft_band(crafts, cls, spec, bands, hi):
+    """slot -> [(id, score)] for one band: per profession, the recipes better than every easier one
+    (lower skill and wear level), so whatever your skill there's something to show."""
+    w = weights_for(bands, cls, spec, hi)
+    p = PROF[cls]
+    per = collections.defaultdict(list)
+    for iid, it, lvl, prof, skill, spell in crafts:
+        if lvl > hi:
+            continue
+        inv = it['inv']
+        keys = []
+        if inv in SLOT_OF_INV:
+            keys.append((SLOT_OF_INV[inv], score(it, w)))
+        if inv == 17:
+            keys.append(('TwoHand', score(it, w)))
+        if inv in (13, 21):
+            keys.append(('MainHand', score(it, w)))
+        if inv in (14, 23) or (inv in (13, 22) and p.get('dw') and hi >= p['dw']):
+            keys.append(('OffHand', score(it, w, offhand=inv in (13, 22))))
+        for slot, sc in keys:
+            if sc >= MIN_SCORE:
+                per[(slot, prof)].append((skill, lvl, sc, iid))
+    out = collections.defaultdict(list)
+    for (slot, prof), lst in per.items():
+        lst.sort(key=lambda x: (x[0], x[1], -x[2]))
+        front = []
+        for skill, lvl, sc, iid in lst:
+            # dominated: an easier (or equal) recipe you can wear as early is at least as good
+            if any(f[0] <= skill and f[1] <= lvl and f[2] >= sc for f in front):
+                continue
+            front.append((skill, lvl, sc, iid))
+        front.sort(key=lambda x: -x[2])
+        for skill, lvl, sc, iid in front[:CRAFT_KEEP]:
+            out[slot].append((iid, round(sc, 1)))
+    for slot in out:
+        out[slot].sort(key=lambda x: -x[1])
+    return out
 
 # --------------------------------------------------------------------------- picking
 
@@ -637,6 +699,20 @@ def main():
             dungeon_level[d] = lv[len(lv) // 2]
 
     used_items, chains, dungeons, plans = {}, {}, {}, []
+    craft_plans, craft_used, weights_out = {}, {}, {}
+    for cls in SPECS:
+        crafts = craft_items(items, lev, cls)
+        info = {c[0]: c for c in crafts}
+        for spec in SPECS[cls]:
+            cp = []
+            for lo, hi in BANDS:
+                slots = craft_band(crafts, cls, spec, bands, hi)
+                for lst in slots.values():
+                    for iid, _ in lst:
+                        craft_used[iid] = info[iid]
+                cp.append((lo, hi, slots))
+            craft_plans[(cls, spec)] = cp
+            weights_out[(cls, spec)] = [(lo, hi, weights_for(bands, cls, spec, hi)) for lo, hi in BANDS]
     report = []
     for faction in ('Horde', 'Alliance'):
         src = Sources(lev, db, faction)
@@ -811,9 +887,33 @@ def main():
                 sl.append(lua_val(rec))
             out.append('{%d,%d,{%s}}' % (lo, hi, ','.join(sl)))
         lines.append('B:Plan(%s,%s,%s,{%s})' % (lua_str(cls), lua_str(spec), lua_str(faction), ','.join(out)))
+    lines.append('')
+    lines.append('-- Craft-now backups. item ID -> { name, profession, skill, recipe spell, required level }')
+    lines.append('B:Crafts({')
+    for iid in sorted(craft_used):
+        _, it, lvl, prof, skill, spell = craft_used[iid]
+        name = lev['names'].get(iid) or db['item'].get(iid) or ('item %d' % iid)
+        lines.append('  [%d]={%s,%s,%d,%d,%d},' % (iid, lua_str(name), lua_str(prof), skill, spell, lvl))
+    lines.append('})')
+    lines.append('-- per spec and band: slot -> { item ID, score, item ID, score, ... } (best first)')
+    for (cls, spec), cp in craft_plans.items():
+        out = []
+        for lo, hi, slots in cp:
+            parts = []
+            for slot in sorted(slots):
+                flat = ','.join('%d,%g' % (iid, sc) for iid, sc in slots[slot])
+                parts.append('%s={%s}' % (slot, flat))
+            out.append('{%d,%d,{%s}}' % (lo, hi, ','.join(parts)))
+        lines.append('B:CraftPlan(%s,%s,{%s})' % (lua_str(cls), lua_str(spec), ','.join(out)))
+    lines.append('-- stat weights per spec and band, to score what you are wearing')
+    for (cls, spec), ws in weights_out.items():
+        out = []
+        for lo, hi, w in ws:
+            out.append('{%d,%d,{%s}}' % (lo, hi, ','.join('%s=%g' % (k, v) for k, v in sorted(w.items()))))
+        lines.append('B:Weights(%s,%s,{%s})' % (lua_str(cls), lua_str(spec), ','.join(out)))
     with open(OUT, 'w', encoding='utf-8', newline='\n') as f:
         f.write('\n'.join(lines) + '\n')
-    print('items %d, chains %d, dungeon runs %d, plans %d, %d bytes' % (len(used_items), len(chain_out), len(dung_out), len(plans), os.path.getsize(OUT)))
+    print('items %d, chains %d, dungeon runs %d, plans %d, crafts %d, %d bytes' % (len(used_items), len(chain_out), len(dung_out), len(plans), len(craft_used), os.path.getsize(OUT)))
     for r in report:
         print('  ' + r)
 

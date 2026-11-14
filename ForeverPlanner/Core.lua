@@ -3,9 +3,10 @@
 
 ForeverPlanner = ForeverPlanner or {}
 local FP = ForeverPlanner
-FP.version = "0.6.2"
+FP.version = "0.6.3"
 -- Shown once after an update (newest first). Keep each line short.
 FP.news = {
+  "Craft now: a new tab on the gear panel (press C) lists gear your professions can make right now that beats what you're wearing, as a backup until you get the plan's pick, plus the next recipe worth skilling up for. An anvil on a plan row means there's a backup for that slot.",
   "Tidier gear panel: one clean row per slot, short sources, the step on the right, and only slots with an upgrade to get are marked on the character window.",
   "Gear plan beside your character window: press C to see your planned item for every slot, with icons, where it comes from and whether you have it. Click one for a waypoint.",
   "Best-in-slot gear routes: your route now takes in the quests, quest chains and dungeons that give your spec's best gear at every level, and the Gear tab lists every pick with where it comes from (quest, boss drop or craft).",
@@ -1227,6 +1228,270 @@ function FP:GearBracket(level)
     if level >= g.from and level <= g.to then return g end
   end
   return (self.plan.gear or {})[1]
+end
+
+------------------------------------------------------------------------
+-- Craft now: gear your professions can make today that beats what you're wearing, as a backup
+-- until you get the plan's pick. Reads your profession skill, and the recipes you know (from the
+-- client, else from your profession window the first time you open it).
+------------------------------------------------------------------------
+local SKILL_LINES = { Alchemy = 171, Blacksmithing = 164, Enchanting = 333, Engineering = 202, Leatherworking = 165,
+  Tailoring = 197, Jewelcrafting = 755, Mining = 186, Herbalism = 182, Skinning = 393, Cooking = 185,
+  ["First Aid"] = 129, Fishing = 356 }
+FP.GEAR_PROFESSIONS = { "Leatherworking", "Tailoring", "Blacksmithing", "Engineering", "Enchanting" }
+local LINE_NAME = {}
+for name, id in pairs(SKILL_LINES) do LINE_NAME[id] = name end
+local function ProfName(s)
+  if type(s) == "number" then return LINE_NAME[s] end
+  if type(s) ~= "string" then return nil end
+  local l = s:lower()
+  for name in pairs(SKILL_LINES) do if name:lower() == l then return name end end
+  return nil
+end
+FP.ProfName = ProfName
+
+-- Your professions -> { Leatherworking = 135, ... }
+function FP:ProfessionSkills()
+  local out = {}
+  local function put(name, rank, maxRank)
+    name = ProfName(self:Readable(name))
+    rank, maxRank = tonumber(self:Readable(rank)), tonumber(self:Readable(maxRank))
+    if name and rank and (rank > 0 or (maxRank or 0) > 0) then out[name] = math.max(out[name] or 0, rank) end
+  end
+  local S = C_SkillInfo
+  if S and S.GetSkillLineInfoByID then
+    for name, id in pairs(SKILL_LINES) do
+      local ok, info = pcall(S.GetSkillLineInfoByID, id)
+      if ok and type(info) == "table" and not info.isHeader then put(name, info.rank, info.maxRank) end
+    end
+  end
+  if S and S.GetNumSkillLines and S.GetSkillLineInfo then
+    local ok, n = pcall(S.GetNumSkillLines)
+    for i = 1, (ok and tonumber(n) or 0) do
+      local ok2, info = pcall(S.GetSkillLineInfo, i)
+      if ok2 and type(info) == "table" and not info.isHeader then put(info.skillID or info.name, info.rank, info.maxRank) end
+    end
+  elseif GetNumSkillLines and GetSkillLineInfo then
+    local ok, n = pcall(GetNumSkillLines)
+    for i = 1, (ok and tonumber(n) or 0) do
+      local ok2, name, header, _, rank, _, _, maxRank = pcall(GetSkillLineInfo, i)
+      if ok2 and not header then put(name, rank, maxRank) end
+    end
+  end
+  if GetProfessions and GetProfessionInfo then
+    local profs = { pcall(GetProfessions) }
+    for i = 2, 6 do
+      if profs[i] then
+        local ok, name, _, rank, maxRank, _, _, line = pcall(GetProfessionInfo, profs[i])
+        if ok then put(line and LINE_NAME[line] or name, rank, maxRank) end
+      end
+    end
+  end
+  return out
+end
+
+-- Remember the recipes you know when a profession window opens (yours, not a linked one).
+function FP:ScanRecipes()
+  local char = self.char
+  if not char then return end
+  char.recipes = char.recipes or {}
+  char.recipesSeen = char.recipesSeen or {}
+  local T, prof, complete = C_TradeSkillUI, nil, false
+  if T and T.GetAllRecipeIDs and T.GetRecipeInfo then
+    for _, name in ipairs({ "IsTradeSkillLinked", "IsTradeSkillGuild", "IsNPCCrafting" }) do
+      if T[name] then local ok, v = pcall(T[name]); if ok and v then return end end
+    end
+    local ok, info = pcall(T.GetBaseProfessionInfo or function() end)
+    if ok and type(info) == "table" then prof = ProfName(info.professionName) or ProfName(info.professionID) end
+    local ok2, ids = pcall(T.GetAllRecipeIDs)
+    if ok2 and type(ids) == "table" then
+      complete = #ids > 0
+      for _, id in ipairs(ids) do
+        local ok3, r = pcall(T.GetRecipeInfo, id)
+        if ok3 and type(r) == "table" and r.learned then char.recipes[id] = true end
+      end
+    end
+  elseif GetNumTradeSkills and GetTradeSkillInfo then
+    if IsTradeSkillLinked then local ok, v = pcall(IsTradeSkillLinked); if ok and v then return end end
+    if GetTradeSkillLine then local ok, name = pcall(GetTradeSkillLine); if ok then prof = ProfName(name) end end
+    local ok, n = pcall(GetNumTradeSkills)
+    complete = ok and (tonumber(n) or 0) > 0
+    for i = 1, (ok and tonumber(n) or 0) do
+      local ok2, _, kind, _, expanded = pcall(GetTradeSkillInfo, i)
+      if ok2 and kind == "header" and expanded == false then complete = false end   -- a collapsed header hides recipes
+      if ok2 and kind and kind ~= "header" and GetTradeSkillItemLink then
+        local ok3, link = pcall(GetTradeSkillItemLink, i)
+        local id = ok3 and type(link) == "string" and tonumber(link:match("item:(%d+)"))
+        if id then char.recipes["i" .. id] = true end
+      end
+    end
+  end
+  if prof and complete then char.recipesSeen[prof] = true end
+end
+
+-- true (you know it), false (your profession window didn't list it), nil (can't tell yet).
+function FP:RecipeKnown(itemID, rec)
+  local char = self.char or {}
+  local spell, prof = rec[4], rec[2]
+  local known = char.recipes or {}
+  if known[spell] or known["i" .. itemID] then return true end
+  if C_TradeSkillUI and C_TradeSkillUI.GetRecipeInfo then
+    local ok, r = pcall(C_TradeSkillUI.GetRecipeInfo, spell)
+    if ok and type(r) == "table" and r.learned then return true end
+  end
+  if IsPlayerSpell then
+    local ok, v = pcall(IsPlayerSpell, spell)
+    if ok and v then return true end
+  end
+  if char.recipesSeen and char.recipesSeen[prof] then return false end
+  return nil
+end
+
+-- Score an item you're wearing with the spec's weights (Forever's own stats from the client).
+local CLIENT_STATS = {
+  ITEM_MOD_STRENGTH_SHORT = "str", ITEM_MOD_AGILITY_SHORT = "agi", ITEM_MOD_STAMINA_SHORT = "sta",
+  ITEM_MOD_INTELLECT_SHORT = "int", ITEM_MOD_SPIRIT_SHORT = "spi", RESISTANCE0_NAME = "armor",
+  ITEM_MOD_HEALTH_SHORT = "health", ITEM_MOD_MANA_SHORT = "mana", ITEM_MOD_DAMAGE_PER_SECOND_SHORT = "dps",
+  ITEM_MOD_ATTACK_POWER_SHORT = "ap", ITEM_MOD_RANGED_ATTACK_POWER_SHORT = "rap",
+  ITEM_MOD_SPELL_DAMAGE_DONE_SHORT = "sp", ITEM_MOD_SPELL_POWER_SHORT = "sp", ITEM_MOD_SPELL_HEALING_DONE_SHORT = "heal",
+  ITEM_MOD_MANA_REGENERATION_SHORT = "mp5", ITEM_MOD_POWER_REGEN0_SHORT = "mp5",
+  ITEM_MOD_HEALTH_REGEN_SHORT = "hp5", ITEM_MOD_HEALTH_REGENERATION_SHORT = "hp5",
+  ITEM_MOD_CRIT_RATING_SHORT = "crit", ITEM_MOD_CRIT_MELEE_RATING_SHORT = "crit",
+  ITEM_MOD_HIT_RATING_SHORT = "hit", ITEM_MOD_HIT_MELEE_RATING_SHORT = "hit",
+  ITEM_MOD_CRIT_SPELL_RATING_SHORT = "spellCrit", ITEM_MOD_HIT_SPELL_RATING_SHORT = "spellHit",
+  ITEM_MOD_DEFENSE_SKILL_RATING_SHORT = "defense", ITEM_MOD_DODGE_RATING_SHORT = "dodge",
+  ITEM_MOD_PARRY_RATING_SHORT = "parry", ITEM_MOD_BLOCK_RATING_SHORT = "block", ITEM_MOD_BLOCK_VALUE_SHORT = "blockValue",
+}
+local function LinkID(link) return type(link) == "string" and tonumber(link:match("item:(%d+)")) or nil end
+
+function FP:WornScore(inv, w, known)
+  local link = GetInventoryItemLink and self:Readable(GetInventoryItemLink("player", inv))
+  if not link then return 0, nil end
+  local id, name = LinkID(link), link:match("%[(.-)%]")
+  if id and known and known[id] then return known[id], name end
+  local get = (C_Item and C_Item.GetItemStats) or GetItemStats
+  local ok, t = false, nil
+  if get then ok, t = pcall(get, link) end
+  if not (ok and type(t) == "table") then return nil, name end   -- can't tell: don't suggest over it
+  local s = 0
+  for k, v in pairs(t) do
+    local key = CLIENT_STATS[k]
+    v = tonumber(self:Readable(v))
+    if key and v then
+      if key == "dps" then
+        key = (inv == 18) and "rdps" or "dps"
+        if inv == 17 then v = v * 0.5 end
+      end
+      s = s + (w[key] or 0) * v
+    end
+  end
+  return s, name
+end
+
+local function TwoHanded(inv)
+  local link = GetInventoryItemLink and GetInventoryItemLink("player", inv)
+  if not link or not (C_Item and C_Item.GetItemInfoInstant or GetItemInfoInstant) then return false end
+  local ok, _, _, _, loc = pcall(C_Item and C_Item.GetItemInfoInstant or GetItemInfoInstant, link)
+  return ok and loc == "INVTYPE_2HWEAPON"
+end
+
+local CRAFT_SLOTS = { "Head", "Neck", "Shoulder", "Back", "Chest", "Wrist", "Hands", "Waist", "Legs", "Feet", "Ring",
+  "Trinket", "TwoHand", "MainHand", "OffHand", "Ranged" }
+local CRAFT_INV = { TwoHand = { 16, 17 } }
+local CRAFT_GAIN, CRAFT_MIN = 1.05, 0.5   -- a backup must beat what you wear by 5% and half a point
+local NEXT_RANGE = 50                     -- recipes more than this many skill points away aren't mentioned
+
+local function BandFor(bands, lvl)
+  if not bands then return nil end
+  local pick = bands[1]
+  for _, b in ipairs(bands) do if lvl >= b[1] then pick = b end end
+  return pick
+end
+
+-- -> rows { slot, id, rec, state = "now" | "check" | "recipe" | "skill" | "bags", have, gain, worn }, skills, why
+function FP:CraftNow()
+  local skills = self:ProfessionSkills()
+  local spec = self:CurrentSpec()
+  local key = (self.class or "") .. ":" .. (spec or "")
+  local cp, ws = self.craftPlans and self.craftPlans[key], self.specWeights and self.specWeights[key]
+  if not (cp and ws) then return {}, skills, "nodata" end
+  local any = false
+  for _, p in ipairs(self.GEAR_PROFESSIONS) do if skills[p] then any = true end end
+  if not any then return {}, skills, "noprof" end
+  local lvl = self:PlayerLevel()
+  local band, wband = BandFor(cp, lvl), BandFor(ws, lvl)
+  local w = wband and wband[3] or {}
+  local lists = band and band[3] or {}
+  -- the plan for this level: skip slots where you already wear its pick; follow its weapon choice
+  local g = self.plan and self.plan.gear and self:GearBracket(lvl)
+  local planned, wornPick = {}, {}
+  for _, sl in ipairs(g and g.slots or {}) do
+    local s = sl.slot == "Weapon" and "TwoHand" or sl.slot
+    planned[s] = true
+    if self:ItemState(sl.best) == "equipped" then wornPick[s] = (wornPick[s] or 0) + 1 end
+  end
+  local usesTwoHand = planned.TwoHand or (not planned.MainHand and TwoHanded(16))
+  local rows = {}
+  for _, slot in ipairs(CRAFT_SLOTS) do
+    local flat = lists[slot]
+    local skip = (slot == "TwoHand" and not usesTwoHand) or ((slot == "MainHand" or slot == "OffHand") and usesTwoHand)
+      or (slot == "OffHand" and TwoHanded(16))
+    local need = (slot == "Ring" or slot == "Trinket") and 2 or 1
+    if flat and not skip and (wornPick[slot] or 0) < need then
+      local scores = {}
+      for i = 1, #flat, 2 do scores[flat[i]] = flat[i + 1] end
+      -- what you're wearing there (the weaker ring or trinket; a two-hander against both hands)
+      local invs = CRAFT_INV[slot] or self.SLOT_IDS[slot] or {}
+      local worn, wornName, wornIds = nil, nil, {}
+      if slot == "TwoHand" then
+        local a, an = self:WornScore(16, w, scores)
+        local b = self:WornScore(17, w, scores)
+        worn, wornName = a and b and (a + b) or nil, an
+      else
+        for _, inv in ipairs(invs) do
+          local s, n = self:WornScore(inv, w, scores)
+          local id = GetInventoryItemID and GetInventoryItemID("player", inv)
+          if id then wornIds[id] = true end
+          if s == nil then worn = nil; wornName = n; break end
+          if worn == nil or s < worn then worn, wornName = s, n end
+        end
+      end
+      if worn then
+        local nowPick, later = nil, {}
+        for i = 1, #flat, 2 do   -- best first
+          local id, sc = flat[i], flat[i + 1]
+          local rec = self.bisCrafts[id]
+          local have = rec and skills[rec[2]]
+          if rec and have and not wornIds[id] and (rec[5] or 1) <= lvl and sc > worn * CRAFT_GAIN + CRAFT_MIN then
+            local row = { slot = slot, id = id, rec = rec, have = have, score = sc, worn = wornName, gain = sc - worn }
+            if have >= rec[3] then
+              if self:ItemState(rec[1]) == "bags" then row.state = "bags"
+              else
+                local k = self:RecipeKnown(id, rec)
+                row.state = (k == true and "now") or (k == nil and "check") or "recipe"
+              end
+              -- the best one you can make; one you'd still have to learn only if there's nothing else
+              if not nowPick or (nowPick.state == "recipe" and row.state ~= "recipe") then nowPick = row end
+            elseif rec[3] - have <= NEXT_RANGE then
+              row.state = "skill"
+              later[#later + 1] = row
+            end
+          end
+        end
+        -- the nearest recipe (fewest skill points away) that beats the best you can make now
+        local nextPick
+        for _, row in ipairs(later) do
+          if (not nowPick or row.score > nowPick.score)
+              and (not nextPick or row.rec[3] < nextPick.rec[3] or (row.rec[3] == nextPick.rec[3] and row.score > nextPick.score)) then
+            nextPick = row
+          end
+        end
+        if nowPick then rows[#rows + 1] = nowPick end
+        if nextPick then rows[#rows + 1] = nextPick end
+      end
+    end
+  end
+  return rows, skills
 end
 
 function FP:OnLevelUp(level)

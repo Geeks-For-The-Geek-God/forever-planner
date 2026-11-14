@@ -1144,6 +1144,9 @@ local function RowState(sl)
 end
 
 local ROW_H, PANEL_W = 31, 300
+local ANVIL = "Interface\\Icons\\Trade_BlackSmithing"
+local CraftLine, CraftTooltip
+local PLAN_FOOT = "|TInterface\\RaidFrame\\ReadyCheck-Ready:12:12|t wearing   |TInterface\\RaidFrame\\ReadyCheck-Waiting:12:12|t to get   |T" .. ANVIL .. ":12:12|t craft backup"
 local SHORT = { ["Wailing Caverns"] = "WC", ["The Deadmines"] = "Deadmines", ["Shadowfang Keep"] = "SFK", ["Blackfathom Deeps"] = "BFD",
   ["Razorfen Kraul"] = "RFK", ["Razorfen Downs"] = "RFD", ["Scarlet Monastery"] = "SM", ["Ragefire Chasm"] = "RFC",
   ["Blackrock Spire"] = "BRS", ["Blackrock Depths"] = "BRD", ["Excavation Site"] = "Excavation Site", ["Zul'Farrak"] = "ZF" }
@@ -1168,6 +1171,48 @@ local function Border(f)
   end
 end
 
+local PROF_ICON = { Leatherworking = "Interface\\Icons\\Trade_LeatherWorking", Tailoring = "Interface\\Icons\\Trade_Tailoring",
+  Blacksmithing = "Interface\\Icons\\Trade_BlackSmithing", Engineering = "Interface\\Icons\\Trade_Engineering",
+  Enchanting = "Interface\\Icons\\Trade_Engraving" }
+local CRAFT_SLOT_LABEL = { TwoHand = "Two-hand", MainHand = "Main hand", OffHand = "Off hand" }
+local CRAFT_STATE = {
+  now = "|cff00ff00craft it|r", bags = "|cffffd100in bags|r", check = "|cffffd100recipe?|r",
+  recipe = "|cffff9933learn recipe|r",
+}
+
+-- One line about a craft backup (chat, and the row's click).
+CraftLine = function(c)
+  local r = c.rec
+  local base = ("%s (%s, %s %d; you have %d)"):format(r[1], CRAFT_SLOT_LABEL[c.slot] or c.slot, r[2], r[3], c.have)
+  if c.state == "now" then return "Craft " .. base .. ": better than " .. (c.worn or "an empty slot") .. "."
+  elseif c.state == "bags" then return base .. " is in your bags: equip it."
+  elseif c.state == "check" then return base .. ": open your " .. r[2] .. " window once so the planner can see your recipes."
+  elseif c.state == "recipe" then return base .. ": you'd need to learn the recipe first (trainer, vendor or drop)."
+  end
+  return ("%s: %d more %s points (%d needed)."):format(r[1], r[3] - c.have, r[2], r[3])
+end
+
+CraftTooltip = function(owner, c)
+  local r = c.rec
+  GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+  local ok = pcall(GameTooltip.SetItemByID, GameTooltip, c.id)
+  if not ok then GameTooltip:AddLine(r[1], 1, 1, 1) end
+  GameTooltip:AddLine(" ")
+  GameTooltip:AddLine("Forever Planner: craft backup for " .. (CRAFT_SLOT_LABEL[c.slot] or SLOT_LABEL[c.slot] or c.slot), 1, 0.82, 0)
+  GameTooltip:AddLine(("%s %d (you have %d)"):format(r[2], r[3], c.have), 1, 1, 1)
+  local why = {
+    now = "You know this recipe: craft it.",
+    bags = "You already have one: equip it.",
+    check = "Open your " .. r[2] .. " window once so the planner can see which recipes you know.",
+    recipe = "You haven't learned this recipe yet: a trainer, vendor or drop teaches it.",
+    skill = ("%d more %s points and you can make it."):format(r[3] - c.have, r[2]),
+  }
+  GameTooltip:AddLine(why[c.state] or "", 0.4, 0.8, 1, true)
+  GameTooltip:AddLine("Better than what you're wearing: " .. (c.worn or "empty slot"), 0.7, 0.7, 0.7, true)
+  GameTooltip:AddLine("A backup only: your plan's pick for the slot is still the goal.", 0.6, 0.6, 0.6, true)
+  GameTooltip:Show()
+end
+
 local function MakeRow(i)
   local r = CreateFrame("Button", nil, panel.body)
   r:SetSize(PANEL_W - 16, ROW_H - 2)
@@ -1185,6 +1230,11 @@ local function MakeRow(i)
   r.state = r:CreateTexture(nil, "OVERLAY")
   r.state:SetSize(13, 13)
   r.state:SetPoint("BOTTOMRIGHT", r.icon, "BOTTOMRIGHT", 3, -2)
+  r.badge = r:CreateTexture(nil, "OVERLAY")   -- plan rows: an anvil when you can craft a backup for the slot
+  r.badge:SetSize(12, 12)
+  r.badge:SetPoint("TOPLEFT", r.icon, "TOPLEFT", -3, 3)
+  r.badge:SetTexture(ANVIL)
+  r.badge:Hide()
   r.step = r:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   r.step:SetPoint("TOPRIGHT", -2, -3)
   r.step:SetJustifyH("RIGHT")
@@ -1199,6 +1249,7 @@ local function MakeRow(i)
   r.info:SetJustifyH("LEFT")
   r.info:SetWordWrap(false)
   r:SetScript("OnClick", function(self)
+    if self.craft then FP:Print(CraftLine(self.craft)); return end
     local sl = self.sl
     if not sl then return end
     local key = (self.state.which == "need" or self.state.which == "alt") and (sl.step or sl.altstep) or sl.step
@@ -1212,6 +1263,7 @@ local function MakeRow(i)
     end
   end)
   r:SetScript("OnEnter", function(self)
+    if self.craft and GameTooltip then return CraftTooltip(self, self.craft) end
     local sl = self.sl
     if not (sl and GameTooltip) then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -1227,6 +1279,9 @@ local function MakeRow(i)
       if sl.altsrc then GameTooltip:AddLine(sl.altsrc, 0.6, 0.6, 0.6, true) end
     end
     GameTooltip:AddLine("Now: " .. FP:SlotNow(sl.slot), 0.7, 0.7, 0.7, true)
+    if self.backup then
+      GameTooltip:AddLine(("|T%s:12:12|t Backup you can craft now: %s"):format(ANVIL, self.backup.rec[1]), 1, 0.82, 0, true)
+    end
     GameTooltip:AddLine("Click: waypoint to the step that gets it.", 0.4, 0.8, 1)
     GameTooltip:Show()
   end)
@@ -1247,11 +1302,27 @@ local function BuildGearPanel()
     panel:SetPoint("CENTER", 300, 0)
     Movable(panel, "gearPanelPos")
   end
-  panel.title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  panel.title:SetPoint("TOPLEFT", 10, -8)
-  panel.title:SetText("Gear plan")
+  -- two tabs: the plan, and what your professions can make now
+  local function Tab(key, text, w, x)
+    local t = CreateFrame("Button", nil, panel)
+    t:SetSize(w, 20)
+    t:SetPoint("TOPLEFT", x, -4)
+    t.label = t:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    t.label:SetPoint("CENTER")
+    t.label:SetText(text)
+    t.line = t:CreateTexture(nil, "ARTWORK")
+    t.line:SetColorTexture(1, 0.82, 0, 0.9)
+    t.line:SetPoint("BOTTOMLEFT", 4, 0); t.line:SetPoint("BOTTOMRIGHT", -4, 0); t.line:SetHeight(2)
+    local hl = t:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.08)
+    t:SetScript("OnClick", function() FP.char.gearTab = key; FP:UpdateGearPanel() end)
+    return t
+  end
+  panel.tabPlan = Tab("plan", "Gear plan", 74, 6)
+  panel.tabCraft = Tab("craft", "Craft now", 100, 82)
+  panel.title = panel.tabPlan.label
   panel.spec = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  panel.spec:SetPoint("LEFT", panel.title, "RIGHT", 6, 0)
+  panel.spec:SetPoint("LEFT", panel.tabCraft, "RIGHT", 4, 0)
   panel.spec:SetPoint("RIGHT", panel, "TOPRIGHT", -28, -16)
   panel.spec:SetJustifyH("LEFT")
   panel.spec:SetWordWrap(false)
@@ -1293,7 +1364,7 @@ local function BuildGearPanel()
   panel.empty:SetJustifyH("LEFT")
   panel.foot = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   panel.foot:SetPoint("BOTTOM", 0, 7)
-  panel.foot:SetText("|TInterface\\RaidFrame\\ReadyCheck-Ready:12:12|t wearing   |TInterface\\RaidFrame\\ReadyCheck-Waiting:12:12|t to get   Click a row for a waypoint")
+  panel.foot:SetText(PLAN_FOOT)
   local close = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", 2, 2)
   close:SetScript("OnClick", function() FP.char.gearPanel = false; panel:Hide(); FP:UpdateGearToggle(); FP:UpdateSlotMarkers() end)
@@ -1323,11 +1394,88 @@ function FP:UpdateGearToggle()
   if toggleTab then toggleTab:SetText(panel:IsShown() and "Hide gear plan" or "Show gear plan") end
 end
 
+local function SetTab(t, on, text)
+  t.label:SetText(text)
+  t.label:SetTextColor(on and 1 or 0.6, on and 0.82 or 0.6, on and 0 or 0.6)
+  if on then t.line:Show() else t.line:Hide() end
+end
+
+-- Craft now tab: per slot, the best backup you can make, and the next recipe worth skilling up for.
+local function UpdateCraftTab(rows, skills, why)
+  panel.prev:Hide(); panel.next:Hide()
+  panel.bandBtn.note = nil
+  local names = {}
+  for _, p in ipairs(FP.GEAR_PROFESSIONS) do
+    if skills[p] then names[#names + 1] = ("|T%s:12:12|t %s %d"):format(PROF_ICON[p] or ANVIL, p, skills[p]) end
+  end
+  panel.band:SetText(#names > 0 and table.concat(names, "   ") or "")
+  local now = 0
+  for _, c in ipairs(rows) do if c.state ~= "skill" then now = now + 1 end end
+  if why == "nodata" then
+    panel.count:SetText("")
+    panel.empty:SetText("No craft data for this spec yet.")
+  elseif why == "noprof" then
+    panel.count:SetText("")
+    panel.empty:SetText("None of your professions make gear. Leatherworking, Tailoring, Blacksmithing and Engineering do (Enchanting makes a few wands, staves and off-hands).")
+  elseif #rows == 0 then
+    panel.count:SetText("")
+    panel.empty:SetText("Nothing to craft right now: what you're wearing is as good as anything your professions make at your skill, or you already wear the plan's pick.")
+  else
+    panel.count:SetText(now > 0 and ("%d backup%s you can make now"):format(now, now == 1 and "" or "s") or "Recipes worth skilling up for")
+  end
+  if #rows == 0 then
+    panel.empty:Show()
+    panel:SetHeight(68 + 60 + 24)
+    panel.foot:SetText("Backups only: your plan's picks stay the goal")
+    return 0
+  end
+  panel.empty:Hide()
+  local n = 0
+  for k, c in ipairs(rows) do
+    local r = panel.rows[k]
+    if not r then break end
+    n = k
+    r.craft = c
+    r.icon:SetTexture(ItemIcon(c.id, c.rec[1]))
+    r.icon:SetDesaturated(c.state == "skill" or c.state == "recipe")
+    local cr, cg, cb = ItemColour(c.id, c.rec[1])
+    r.name:SetText(c.rec[1])
+    r.name:SetTextColor(cr, cg, cb)
+    r.state:SetTexture(nil)
+    r.badge:Hide()
+    local label = GREY .. (CRAFT_SLOT_LABEL[c.slot] or SLOT_LABEL[c.slot] or c.slot) .. "|r  "
+    r.info:SetText(label .. ("%s %d"):format(c.rec[2], c.rec[3]) .. GREY .. "  beats " .. (c.worn or "empty slot") .. "|r")
+    r.step:SetText(c.state == "skill" and ("|cffff9933%d points to go|r"):format(c.rec[3] - c.have) or CRAFT_STATE[c.state])
+    r:Show()
+  end
+  panel:SetHeight(68 + n * ROW_H + 24)
+  panel.foot:SetText("Backups only: your plan's picks stay the goal. Hover a row for details")
+  return n
+end
+
 function FP:UpdateGearPanel()
   if not panel or not panel:IsShown() then return end
   local g, idx, n = PanelBand()
   panel.spec:SetText(self.plan and self.plan.name or "")
-  for _, r in ipairs(panel.rows) do r:Hide(); r.sl = nil end
+  for _, r in ipairs(panel.rows) do r:Hide(); r.sl = nil; r.craft = nil; r.backup = nil; r.badge:Hide() end
+  local tab = self.char and self.char.gearTab or "plan"
+  local okC, crafts, skills, why = pcall(self.CraftNow, self)
+  if not okC then crafts, skills, why = {}, {}, "nodata" end
+  local nowCount, bySlot = 0, {}
+  for _, c in ipairs(crafts) do
+    if c.state ~= "skill" then
+      nowCount = nowCount + 1
+      bySlot[c.slot == "TwoHand" and "Weapon" or c.slot] = c
+    end
+  end
+  SetTab(panel.tabPlan, tab ~= "craft", "Gear plan")
+  SetTab(panel.tabCraft, tab == "craft", nowCount > 0 and ("Craft now |cff00ff00(%d)|r"):format(nowCount) or "Craft now")
+  if tab == "craft" then
+    UpdateCraftTab(crafts, skills or {}, why)
+    self:UpdateSlotMarkers()
+    return
+  end
+  panel.foot:SetText(PLAN_FOOT)
   if not g then
     panel.band:SetText("")
     panel.count:SetText("")
@@ -1377,6 +1525,8 @@ function FP:UpdateGearPanel()
         r.step:SetText(i and ("step %s"):format(self.plan.route[i].num or sl.step) or "")
       end
       r.icon:SetDesaturated(st ~= "bags")
+      local c = here and bySlot[sl.slot]
+      if c then r.backup = c; r.badge:Show() end
     end
     r:Show()
   end
@@ -1450,10 +1600,22 @@ local function HookSlotTooltips()
 end
 
 local gearEvents = CreateFrame("Frame")
-for _, e in ipairs({ "PLAYER_LOGIN", "PLAYER_EQUIPMENT_CHANGED", "BAG_UPDATE_DELAYED", "GET_ITEM_INFO_RECEIVED", "PLAYER_LEVEL_UP" }) do
-  gearEvents:RegisterEvent(e)
+for _, e in ipairs({ "PLAYER_LOGIN", "PLAYER_EQUIPMENT_CHANGED", "BAG_UPDATE_DELAYED", "GET_ITEM_INFO_RECEIVED", "PLAYER_LEVEL_UP",
+  "SKILL_LINES_CHANGED", "CHAT_MSG_SKILL", "NEW_RECIPE_LEARNED", "TRADE_SKILL_SHOW", "TRADE_SKILL_LIST_UPDATE",
+  "TRADE_SKILL_UPDATE", "TRADE_SKILL_DATA_SOURCE_CHANGED" }) do
+  pcall(gearEvents.RegisterEvent, gearEvents, e)   -- an event this client doesn't have is skipped
 end
+local TRADE = { TRADE_SKILL_SHOW = true, TRADE_SKILL_LIST_UPDATE = true, TRADE_SKILL_UPDATE = true,
+  TRADE_SKILL_DATA_SOURCE_CHANGED = true, NEW_RECIPE_LEARNED = true }
 gearEvents:SetScript("OnEvent", function(_, event)
+  if TRADE[event] then
+    -- the profession window lists your recipes: remember them for "Craft now"
+    local function scan()
+      pcall(FP.ScanRecipes, FP)
+      if panel and panel:IsShown() then FP:UpdateGearPanel() end
+    end
+    if C_Timer and C_Timer.After then C_Timer.After(0.5, scan) else scan() end
+  end
   if event == "PLAYER_LOGIN" then
     if C_Timer and C_Timer.After then
       C_Timer.After(1, function() if not panel then BuildGearPanel() end HookSlotTooltips() end)
@@ -1462,6 +1624,8 @@ gearEvents:SetScript("OnEvent", function(_, event)
     end
     return
   end
+  -- read what you wear and carry first: this frame's events can come before the main one's
+  if (event == "PLAYER_EQUIPMENT_CHANGED" or event == "BAG_UPDATE_DELAYED") and FP.ScanItems then pcall(FP.ScanItems, FP) end
   if panel and panel:IsShown() then
     if event == "PLAYER_LEVEL_UP" then panel.bandIdx = nil end
     FP:UpdateGearPanel()

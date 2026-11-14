@@ -13,12 +13,14 @@ Download `ForeverPlanner-Updater.zip` from the latest release, unblock and extra
 ## Use
 On a character's first login a small window asks for its spec (the recommended one is ticked) and whether to include group quests. Close it or press Start; `/fp setup` changes it later. `/fp` opens the plan window (Route, Talents, Macros, Gear). `/fp help` lists every command. Questie and TomTom are optional but recommended.
 
+Press C: the gear panel beside the character window has two tabs. **Gear plan** shows the planned item for every slot at your level, with where it comes from. **Craft now** shows what your professions can make right now that beats what you're wearing, and the next recipe worth skilling up for.
+
 ## Layout
 - `ForeverPlanner/` — the addon. `Core.lua` (engine), `Route.lua` (building each character's plan), `UI.lua` (tracker, plan window, setup window).
   - `Data/Routes/` — levelling routes for both factions and class quest guides, converted from Polestar (`tools/convert_polestar.py`).
   - `Data/Talents.lua` — levelling talent builds for all nine classes (ForeverDB, via Polestar).
   - `Data/Classes/<Class>.lua` — one file per class: macros, trainer notes, gear, and optionally its own route (the Druid's from level 21).
-- `tools/` — `convert_polestar.py` regenerates the route and talent data from a Polestar checkout.
+- `tools/` — `convert_polestar.py` regenerates the route and talent data from a Polestar checkout; `build_bis.py` the gear plans, gear routes and craft-now lists (`Data/Routes/BiS.lua`).
 - `updater/` — Windows updater: `Install.cmd` sets up a scheduled task that runs `Update-ForeverPlanner.ps1` every 3 hours.
 - `MAINTAINING.md` — the weekly maintenance checklist; `data-sources.json` — which route doc revision each plan was built from.
 - `tests/` — Lua 5.1 tests against a stubbed WoW API. Run `pip install lupa==2.8` then `python tests/run_all.py`.

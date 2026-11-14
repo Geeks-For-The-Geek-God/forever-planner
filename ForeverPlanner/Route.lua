@@ -44,6 +44,11 @@ function B:Dungeon(head, fn)
   FP.bisDungeons[head.key] = head
 end
 function B:Plan(cls, spec, faction, bands) FP.bisPlans[cls .. ":" .. spec .. ":" .. faction] = bands end
+-- Craft-now backups: crafted items, per spec and band the crafts worth making per slot, and stat weights.
+FP.bisCrafts, FP.craftPlans, FP.specWeights = {}, {}, {}
+function B:Crafts(t) for id, rec in pairs(t) do FP.bisCrafts[id] = rec end end
+function B:CraftPlan(cls, spec, bands) FP.craftPlans[cls .. ":" .. spec] = bands end
+function B:Weights(cls, spec, bands) FP.specWeights[cls .. ":" .. spec] = bands end
 
 -- Class files: FP:RegisterClass({ class = "WARLOCK", recommended = "affliction",
 --   specs = { affliction = { name = "...", talents = {...}?, macros = {...}, gear = {...}, ... } } })
@@ -438,6 +443,20 @@ function FP:FreeOtherFaction()
   end
   for _, side in pairs(self.sides) do
     if not self:SideMatches(side) then side.fn = nil; side.steps = nil end
+  end
+  -- other classes' craft lists, and crafts only they use
+  if self.class then
+    local keep = {}
+    for key, bands in pairs(self.craftPlans) do
+      if key:match("^[^:]+") ~= self.class then
+        self.craftPlans[key], self.specWeights[key] = nil, nil
+      else
+        for _, b in ipairs(bands) do
+          for _, flat in pairs(b[3]) do for i = 1, #flat, 2 do keep[flat[i]] = true end end
+        end
+      end
+    end
+    for id in pairs(self.bisCrafts) do if not keep[id] then self.bisCrafts[id] = nil end end
   end
 end
 
