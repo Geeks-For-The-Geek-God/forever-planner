@@ -2,7 +2,7 @@
 ## Title: Forever Planner
 ## Notes: Levelling route, talents, macros and gear for every character, step by step from your first login.
 ## Author: The Forever Planner authors
-## Version: 0.6.3
+## Version: 0.6.4
 ## SavedVariables: ForeverPlannerDB
 ## SavedVariablesPerCharacter: ForeverPlannerChar
 ## OptionalDeps: Questie, TomTom

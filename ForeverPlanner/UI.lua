@@ -1289,6 +1289,41 @@ local function MakeRow(i)
   return r
 end
 
+-- Forever's character window has side tabs sticking out of its right edge; dock the panel beyond
+-- them (and beyond anything else attached there), not underneath.
+local function DockOffset(parent)
+  local ok, right = pcall(parent.GetRight, parent)
+  if not ok or type(right) ~= "number" then return 4 end
+  local edge = right
+  local function consider(f)
+    if not f or f == panel or f == toggleTab then return end
+    local okS, shown = pcall(f.IsShown, f)
+    if not (okS and shown) then return end
+    local okR, r = pcall(f.GetRight, f)
+    local okL, l = pcall(f.GetLeft, f)
+    if okR and okL and type(r) == "number" and type(l) == "number" and r > edge and l < right + 8 and r - right < 120 then
+      edge = r
+    end
+  end
+  local function scan(f, depth)
+    if depth > 3 or not f.GetChildren then return end
+    for _, c in ipairs({ f:GetChildren() }) do
+      if c ~= panel and c ~= toggleTab then consider(c); scan(c, depth + 1) end
+    end
+  end
+  scan(parent, 1)
+  for i = 1, 8 do consider(_G["CharacterFrameTab" .. i]) end
+  return math.floor(edge - right + 0.5) + 4
+end
+
+local function Dock()
+  local parent = _G.CharacterFrame
+  if not (panel and parent) then return end
+  panel:ClearAllPoints()
+  panel:SetPoint("TOPLEFT", parent, "TOPRIGHT", DockOffset(parent), 0)
+end
+FP.DockGearPanel = Dock
+
 local function BuildGearPanel()
   local parent = _G.CharacterFrame or UIParent
   panel = CreateFrame("Frame", "ForeverPlannerGearPanel", parent)
@@ -1296,7 +1331,7 @@ local function BuildGearPanel()
   Bg(panel, 0.88)
   Border(panel)
   if parent ~= UIParent then
-    panel:SetPoint("TOPLEFT", parent, "TOPRIGHT", 4, 0)
+    Dock()
     panel:SetFrameStrata(parent:GetFrameStrata() or "MEDIUM")
   else
     panel:SetPoint("CENTER", 300, 0)
@@ -1316,6 +1351,14 @@ local function BuildGearPanel()
     local hl = t:CreateTexture(nil, "HIGHLIGHT")
     hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.08)
     t:SetScript("OnClick", function() FP.char.gearTab = key; FP:UpdateGearPanel() end)
+    t:SetScript("OnEnter", function(self)
+      if not GameTooltip then return end
+      GameTooltip:SetOwner(self, "ANCHOR_TOP")
+      GameTooltip:AddLine(key == "plan" and "Your gear plan for each level band" or "Gear your professions can make now", 1, 0.82, 0)
+      if self.tip then GameTooltip:AddLine(self.tip, 1, 1, 1, true) end
+      GameTooltip:Show()
+    end)
+    t:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
     return t
   end
   panel.tabPlan = Tab("plan", "Gear plan", 74, 6)
@@ -1366,7 +1409,8 @@ local function BuildGearPanel()
   panel.foot:SetPoint("BOTTOM", 0, 7)
   panel.foot:SetText(PLAN_FOOT)
   local close = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
-  close:SetPoint("TOPRIGHT", 2, 2)
+  close:SetSize(22, 22)
+  close:SetPoint("TOPRIGHT", -3, -3)
   close:SetScript("OnClick", function() FP.char.gearPanel = false; panel:Hide(); FP:UpdateGearToggle(); FP:UpdateSlotMarkers() end)
   panel:Hide()
 
@@ -1374,7 +1418,7 @@ local function BuildGearPanel()
     -- A small button on the character window turns the panel on and off.
     toggleTab = CreateFrame("Button", "ForeverPlannerGearToggle", parent, "UIPanelButtonTemplate")
     toggleTab:SetSize(110, 20)
-    toggleTab:SetPoint("BOTTOMLEFT", panel, "TOPLEFT", 0, 2)
+    toggleTab:SetPoint("TOPRIGHT", parent, "BOTTOMRIGHT", 0, -2)
     toggleTab:SetScript("OnClick", function()
       FP.char.gearPanel = not panel:IsShown()
       if FP.char.gearPanel then panel:Show(); FP:UpdateGearPanel() else panel:Hide() end
@@ -1382,6 +1426,8 @@ local function BuildGearPanel()
       FP:UpdateSlotMarkers()
     end)
     parent:HookScript("OnShow", function()
+      Dock()
+      if C_Timer and C_Timer.After then C_Timer.After(0.1, Dock) end   -- side tabs can be laid out a moment later
       if FP.char and FP.char.gearPanel ~= false and FP.plan then panel.bandIdx = nil; panel:Show(); FP:UpdateGearPanel() end
       FP:UpdateGearToggle()
       FP:UpdateSlotMarkers()
@@ -1456,7 +1502,8 @@ end
 function FP:UpdateGearPanel()
   if not panel or not panel:IsShown() then return end
   local g, idx, n = PanelBand()
-  panel.spec:SetText(self.plan and self.plan.name or "")
+  panel.spec:SetText("")
+  panel.tabPlan.tip = self.plan and self.plan.name or nil
   for _, r in ipairs(panel.rows) do r:Hide(); r.sl = nil; r.craft = nil; r.backup = nil; r.badge:Hide() end
   local tab = self.char and self.char.gearTab or "plan"
   local okC, crafts, skills, why = pcall(self.CraftNow, self)
@@ -1644,6 +1691,7 @@ function FP:ShowGearPanel()
     end
   end
   panel.bandIdx = nil
+  Dock()
   panel:Show()
   self:UpdateGearPanel()
   self:UpdateGearToggle()
@@ -1652,6 +1700,7 @@ end
 function FP:GearDebug()
   self:Print(("Character window: %s. Gear panel: %s. Plan bands: %d."):format(_G.CharacterFrame and "found" or "not found",
     panel and (panel:IsShown() and "shown" or "hidden") or "not built", self.plan and self.plan.gear and #self.plan.gear or 0))
+  if _G.CharacterFrame then self:Print(("Panel sits %d pixels right of the character window."):format(DockOffset(_G.CharacterFrame))) end
   local missing = {}
   for _, n in pairs(SLOT_BUTTONS) do if not _G[n] then missing[#missing + 1] = n end end
   self:Print(#missing == 0 and "All character slot buttons found." or ("Slot buttons not found: " .. table.concat(missing, ", ")))

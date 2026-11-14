@@ -88,6 +88,19 @@ check(run("return ForeverPlannerGearPanel.band.text").startswith("Levels 10-19")
 run("TT.lines = {}; GameTooltip:SetInventoryItem('player', %d)" % inv)
 check(any("plan's pick" in str(l) for l in run("return TT.lines").values()), "character slot tooltip: 'is your plan's pick'")
 
+# docking: beyond side tabs sticking out of the character window's right edge
+anchor = run("""local cf = CharacterFrame
+  cf.GetRight = function() return 600 end
+  local tab = CreateFrame("Button", "FakeSideTab", cf); tab.GetLeft = function() return 597 end; tab.GetRight = function() return 641 end
+  tab.IsShown = function() return true end
+  cf.GetChildren = function() return tab, ForeverPlannerGearPanel end
+  local pts = {}
+  ForeverPlannerGearPanel.ClearAllPoints = function() end
+  ForeverPlannerGearPanel.SetPoint = function(self, a, rel, b, x, y) pts = { a, b, x } end
+  FireHook("CharacterFrameOnShow")
+  return pts[1] .. " " .. pts[2] .. " " .. pts[3]""")
+check(anchor == "TOPLEFT TOPRIGHT 45", "panel docks clear of the character window's side tabs: " + anchor)
+
 # closing the panel remembers it
 run("ForeverPlanner.char.gearPanel = false; ForeverPlannerGearPanel:Hide(); FireHook('CharacterFrameOnShow')")
 check(run("return ForeverPlannerGearPanel:IsShown()") is False, "closed panel stays closed next time")

@@ -3,9 +3,10 @@
 
 ForeverPlanner = ForeverPlanner or {}
 local FP = ForeverPlanner
-FP.version = "0.6.3"
+FP.version = "0.6.4"
 -- Shown once after an update (newest first). Keep each line short.
 FP.news = {
+  "The gear panel now sits clear of the character window's side tabs, the Show/Hide button is below the character window, and the header no longer cuts off your spec name.",
   "Craft now: a new tab on the gear panel (press C) lists gear your professions can make right now that beats what you're wearing, as a backup until you get the plan's pick, plus the next recipe worth skilling up for. An anvil on a plan row means there's a backup for that slot.",
   "Tidier gear panel: one clean row per slot, short sources, the step on the right, and only slots with an upgrade to get are marked on the character window.",
   "Gear plan beside your character window: press C to see your planned item for every slot, with icons, where it comes from and whether you have it. Click one for a waypoint.",
