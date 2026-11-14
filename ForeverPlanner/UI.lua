@@ -967,9 +967,16 @@ local function BuildSetup()
   setup.group.label:SetWidth(400)
   setup.group.label:SetJustifyH("LEFT")
   setup.group.label:SetText("Include group quests (elites that need 2 or more players). Off: the route skips them.")
+  setup.dungeons = CreateFrame("CheckButton", nil, setup, "UICheckButtonTemplate")
+  setup.dungeons:SetSize(24, 24)
+  setup.dungeons.label = setup:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  setup.dungeons.label:SetPoint("LEFT", setup.dungeons, "RIGHT", 2, 0)
+  setup.dungeons.label:SetWidth(400)
+  setup.dungeons.label:SetJustifyH("LEFT")
+  setup.dungeons.label:SetText("Include dungeons. On: the route runs the dungeons whose quests and bosses give your best gear.")
   setup.start = Button(setup, "Start", 120, 24, function()
     setup.applied = true
-    FP:ApplySetup(setup.choice, setup.group:GetChecked())
+    FP:ApplySetup(setup.choice, setup.group:GetChecked(), setup.dungeons:GetChecked())
     setup:Hide()
   end)
   setup.start:SetPoint("BOTTOMRIGHT", -14, 12)
@@ -982,7 +989,7 @@ local function BuildSetup()
   close:SetPoint("TOPRIGHT", 2, 2)
   setup:SetScript("OnHide", function()
     -- Closed without Start on the first login: keep the recommended choices.
-    if not setup.applied and FP.char and FP.char.setup == nil then FP:ApplySetup(setup.choice, setup.group:GetChecked()) end
+    if not setup.applied and FP.char and FP.char.setup == nil then FP:ApplySetup(setup.choice, setup.group:GetChecked(), setup.dungeons:GetChecked()) end
   end)
   setup:Hide()
 end
@@ -1019,7 +1026,7 @@ function FP:ShowSetup()
   local short = {}
   for k, n in ipairs(chain) do if k <= 6 then short[#short + 1] = n end end
   if #chain > 6 then short[#short + 1] = ("... %d zones in all"):format(#chain) end
-  setup.intro:SetText(("%s %s, level %d. Your route: %s (%d steps). It ticks itself off from your quests.\n\nPick your spec. Talents follow it; the Plan window shows each pick."):format(
+  setup.intro:SetText(("%s %s, level %d. Your route: %s (%d steps), with the quests, dungeons and crafts for your spec's best gear. It ticks itself off from your quests.\n\nPick your spec. Talents follow it; the Plan window shows each pick."):format(
     tostring(self:Readable(race) or ""), tostring(self.className or self.class or ""), self:PlayerLevel(), table.concat(short, " > "),
     self.plan and #self.plan.route or 0))
   local y = -38 - setup.intro:GetStringHeight() - 10
@@ -1041,6 +1048,10 @@ function FP:ShowSetup()
   setup.group:SetPoint("TOPLEFT", 14, y - 6)
   setup.group:SetChecked(self.char.setup and self.char.setup.group or false)
   y = y - 6 - 28
+  setup.dungeons:ClearAllPoints()
+  setup.dungeons:SetPoint("TOPLEFT", 14, y)
+  setup.dungeons:SetChecked(not (self.char.setup and self.char.setup.dungeons == false))
+  y = y - 28
   setup:SetHeight(-y + 50)
   setup:Show()
 end

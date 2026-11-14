@@ -2,7 +2,7 @@
 ## Title: Forever Planner
 ## Notes: Levelling route, talents, macros and gear for every character, step by step from your first login.
 ## Author: The Forever Planner authors
-## Version: 0.5.3
+## Version: 0.6.0
 ## SavedVariables: ForeverPlannerDB
 ## SavedVariablesPerCharacter: ForeverPlannerChar
 ## OptionalDeps: Questie, TomTom
@@ -14,6 +14,7 @@ Data\Talents.lua
 Data\Routes\Horde.lua
 Data\Routes\Alliance.lua
 Data\Routes\ClassQuests.lua
+Data\Routes\BiS.lua
 Data\Classes\Druid.lua
 Data\Classes\Hunter.lua
 Data\Classes\Mage.lua

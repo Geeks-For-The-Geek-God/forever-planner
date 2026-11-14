@@ -32,8 +32,9 @@ instead of acting on it.
      anything that changes the build or rotation. List it in the summary with what you'd suggest.
 3. **Polestar changes.** `git clone --depth 1 https://github.com/fitzforge/polestar /tmp/polestar` and compare its
    commit (`git -C /tmp/polestar rev-parse HEAD`) with `data-sources.json` → `Polestar.commit`. If it's newer, run
-   `python tools/convert_polestar.py /tmp/polestar`. It rewrites only the existing route and talent files and
-   updates `data-sources.json`. Check the printed summary (segments, steps) is in line with the last run; a big
+   `python tools/convert_polestar.py /tmp/polestar` and then `python tools/build_bis.py /tmp/polestar` (the gear
+   routes depend on the routes). They rewrite only the existing route, talent and gear files and update
+   `data-sources.json`. Check the printed summary (segments, steps) is in line with the last run; a big
    drop means Polestar changed its format: publish nothing and write it up. Note new Polestar zones or races in
    the summary (a new route file would need a new TOC line, which a weekly run must not add).
 4. **Route doc changes.** Compare the route doc's current `rev` with `data-sources.json`. If it changed,

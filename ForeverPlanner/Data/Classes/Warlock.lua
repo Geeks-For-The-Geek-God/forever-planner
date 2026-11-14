@@ -137,32 +137,12 @@ local TRAINING = {
   [48] = "Soul Fire",
 }
 
--- Gear: levelling wands and the Warlock class-quest items. Wands matter most until about 30.
-local GEAR = {
-  { from = 10, to = 19, label = "Levels 10-19", slots = {
-    { slot = "Wand", best = "Greater Magic Wand", src = "Enchanting (13) or the Auction House", alt = "Lesser Magic Wand", altsrc = "Enchanting (5) or the Auction House" },
-  } },
-  { from = 20, to = 29, label = "Levels 20-29", slots = {
-    { slot = "Wand", best = "Gravestone Scepter", src = "Q: Blackfathom Villainy (Blackfathom Deeps)", alt = "Greater Magic Wand", altsrc = "Enchanting or the Auction House" },
-    { slot = "Weapon", best = "Staff of Soran'ruk", src = "Class quest: Orb of Soran'ruk (/fp side), fragments from BFD and SFK", alt = "Orb of Soran'ruk", altsrc = "same quest, the off-hand choice" },
-  } },
-  { from = 30, to = 39, label = "Levels 30-39", slots = {
-    { slot = "Wand", best = "Necrotic Wand", src = "Scarlet Monastery (?)", alt = "Gravestone Scepter", altsrc = "Q: Blackfathom Villainy" },
-    { slot = "Chest", best = "Enchanted Gold Bloodrobe", src = "Class quest: Enchanted Gold Bloodrobe (/fp side), levels 31-38" },
-    { slot = "Weapon", best = "Staff of Dar'Orahil", src = "Class quest: Orb of Orahil (/fp side), levels 35-40; or Staff of Noh'Orahil / an Orahil orb", alt = "Staff of Soran'ruk", altsrc = "Class quest: Orb of Soran'ruk" },
-  } },
-  { from = 40, to = 49, label = "Levels 40-49", slots = {
-    { slot = "Wand", best = "Peacekeeper Wand", src = "(?) Warcraft Tavern's pick at 43", alt = "White Obsidian Wand", altsrc = "(?) at 39" },
-  } },
-  { from = 50, to = 60, label = "Levels 50-60", slots = {
-    { slot = "Wand", best = "Wand of Biting Cold", src = "Quest reward, 51 (?)" },
-    { slot = "Weapon", best = "Soul Harvester", src = "Class quest: An Imp's Request (/fp side), 50-54", alt = "Shard of the Green Flame", altsrc = "Class quest: Shard of the Green Flame, 50-56 (off-hand)" },
-    { slot = "Chest", best = "Robes of Servitude", src = "Class quest: An Imp's Request (a choice with Soul Harvester and Abyss Shard)" },
-  } },
-}
+-- Gear: the best-in-slot gear route for your spec (Data/Routes/BiS.lua, built by tools/build_bis.py from
+-- every quest reward, dungeon boss drop and craft) fills the Gear tab and adds its quests and dungeons to
+-- the route. Class-quest items (Soran'ruk, Bloodrobe, Orahil, An Imp's Request) are offered on the tracker.
 
 local function Spec(name, desc, macros)
-  return { name = name, desc = desc, macros = macros, training = TRAINING, gear = GEAR,
+  return { name = name, desc = desc, macros = macros, training = TRAINING,
     macroNote = "Keys: 1 ATTACK, 2 DOTS, 3 DRAIN, 4 PET, 5 SELF. Thumb = Shift, pinky = Ctrl. Clear the game's own Shift+1-5 and Ctrl+1-5 bindings first." }
 end
 

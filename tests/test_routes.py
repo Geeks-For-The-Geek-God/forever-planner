@@ -101,6 +101,7 @@ for fac, races in pairs(pairs_) do
         if #r < 300 then bad[#bad+1] = race .. " " .. cls .. " only " .. #r .. " steps" end
         if not last or last.lvl < 58 then bad[#bad+1] = race .. " " .. cls .. " ends at " .. tostring(last and last.lvl) end
         if not next(FP.plan.talents) then bad[#bad+1] = cls .. " no talents" end
+        if cls ~= "DRUID" and not (FP.plan.gear and #FP.plan.gear == 6) then bad[#bad+1] = race .. " " .. cls .. " no gear plan" end
         local keys = {}
         for _, s in ipairs(r) do if keys[s.key] then bad[#bad+1] = "dup key " .. s.key end; keys[s.key] = true end
       end
@@ -156,7 +157,33 @@ run('ForeverPlanner:ApplySetup("affliction", false)')
 check(run("return ForeverPlanner.char.setup.spec") == "affliction", "setup saved per character")
 check(run("local t={} for _,m in ipairs(ForeverPlanner:CurrentMacros()) do t[#t+1]=m.name end return table.concat(t,',')") == "ATTACK,DOTS,DRAIN,PET,SELF",
       "Warlock macro set: ATTACK, DOTS, DRAIN, PET, SELF")
-check(run("return ForeverPlanner.plan.gear and #ForeverPlanner.plan.gear") == 5, "Warlock gear brackets")
+check(run("return ForeverPlanner.plan.gear and #ForeverPlanner.plan.gear") == 6, "Warlock best-in-slot gear: six level bands")
+gr = run("""local FP = ForeverPlanner; local dung, gearq, linked, total = {}, 0, 0, 0
+for _, s in ipairs(FP.plan.route) do
+  if s.gear then if s.sec:find("^Dungeon:") then dung[s.sec] = true else gearq = gearq + 1 end end
+end
+for _, g in ipairs(FP.plan.gear) do for _, sl in ipairs(g.slots) do total = total + 1; if sl.step then linked = linked + 1 end end end
+local d = {} for k in pairs(dung) do d[#d+1] = k end table.sort(d)
+return table.concat(d, ', '), gearq, linked, total""")
+print("   dungeons:", gr[0]); print("   gear quest steps:", gr[1], "linked picks:", gr[2], "/", gr[3])
+check("Dungeon: Wailing Caverns" in gr[0] and "Dungeon: Scholomance" in gr[0], "gear route runs the dungeons with your gear (Wailing Caverns ... Scholomance)")
+check(gr[1] > 10, "gear quest chains the levelling route doesn't do are added")
+check(gr[2] >= gr[3] * 0.6, "most picks link to the step that gets them (%d of %d; crafts have none)" % (gr[2], gr[3]))
+wc = run("""local FP = ForeverPlanner
+for _, g in ipairs(FP.plan.gear) do for _, sl in ipairs(g.slots) do
+  if sl.src and sl.src:find("Wailing Caverns %(") then
+    local i = FP:StepIndex(sl.step); return sl.best .. " -> " .. tostring(i and FP.plan.route[i].title)
+  end
+end end""")
+check(wc and "Run Wailing Caverns" in wc, "a Wailing Caverns boss drop links to the run step: " + str(wc))
+ordered = run("""local FP = ForeverPlanner; local last = 0
+for _, s in ipairs(FP.plan.route) do if s.gear and s.sec:find("^Dungeon:") and s.title:find("^Run ") then
+  if s.lvl < last then return false end; last = s.lvl end end return true""")
+check(ordered, "dungeon runs come in level order")
+run('ForeverPlanner:ApplySetup("affliction", false, false)')
+check(run("for _, s in ipairs(ForeverPlanner.plan.route) do if s.gear and s.sec:find('^Dungeon:') then return true end end return false") is False,
+      "dungeons off in setup: no dungeon runs")
+run('ForeverPlanner:ApplySetup("affliction", false, true)')
 check(run("return ForeverPlanner.plan.training[8]") == "Bane of Agony, Fear", "trainer notes")
 
 cur = lambda: run("local s = ForeverPlanner.plan.route[ForeverPlanner.current]; return s and s.title")

@@ -3,9 +3,10 @@
 
 ForeverPlanner = ForeverPlanner or {}
 local FP = ForeverPlanner
-FP.version = "0.5.3"
+FP.version = "0.6.0"
 -- Shown once after an update (newest first). Keep each line short.
 FP.news = {
+  "Best-in-slot gear routes: your route now takes in the quests, quest chains and dungeons that give your spec's best gear at every level, and the Gear tab lists every pick with where it comes from (quest, boss drop or craft).",
   "Class quests you already have (Cure Poison, pets, forms) are no longer offered on the tracker.",
   "The route now follows you: a step finishes as soon as its quests are done, abandoned quests stop holding it up, and steps you've moved on from are skipped by themselves (/fp undo brings them back).",
   "Classes without their own plan yet now start on the spec their levelling guide recommends (Priest: Discipline, as in your Priest brief).",

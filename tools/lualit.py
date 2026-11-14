@@ -160,3 +160,33 @@ def local_tables(src, name):
     for m in re.finditer(r'local %s = ' % re.escape(name), src):
         p = Parser(src, m.end())
         yield m.start(), p.value()
+
+
+def call_args(src, func):
+    """Yields the list of parsed arguments of every func(...) call in src."""
+    pos = 0
+    needle = func + '('
+    while True:
+        i = src.find(needle, pos)
+        if i < 0:
+            return
+        p = Parser(src, i + len(needle))
+        args = []
+        while True:
+            p.ws()
+            if src[p.i] == ')':
+                p.i += 1
+                break
+            args.append(p.value())
+            p.ws()
+            if src[p.i] == ',':
+                p.i += 1
+        yield args
+        pos = p.i
+
+
+def assigned_table(src, name):
+    """Parses the table literal assigned as `<name> = {...}`."""
+    i = src.index(name + ' = {')
+    p = Parser(src, i + len(name) + 3)
+    return p.value()

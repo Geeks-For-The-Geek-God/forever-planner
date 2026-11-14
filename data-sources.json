@@ -16,9 +16,10 @@
       "ForeverPlanner/Data/Routes/Horde.lua",
       "ForeverPlanner/Data/Routes/Alliance.lua",
       "ForeverPlanner/Data/Routes/ClassQuests.lua",
-      "ForeverPlanner/Data/Talents.lua"
+      "ForeverPlanner/Data/Talents.lua",
+      "ForeverPlanner/Data/Routes/BiS.lua"
     ],
-    "regenerate": "python tools/convert_polestar.py <path to a polestar checkout>"
+    "regenerate": "python tools/convert_polestar.py <polestar>; then python tools/build_bis.py <polestar>"
   },
   "Warlock": {
     "dataFile": "ForeverPlanner/Data/Classes/Warlock.lua",

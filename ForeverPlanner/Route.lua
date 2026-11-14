@@ -28,6 +28,20 @@ end
 
 function FP:RegisterTalentBuilds(b) self.talentBuilds[b.class] = b end
 
+-- Best-in-slot gear routes (Data/Routes/BiS.lua, from tools/build_bis.py)
+FP.bisItems, FP.bisChains, FP.bisDungeons, FP.bisPlans = {}, {}, {}, {}
+local B = {}
+function FP:BiSData() return B end
+function B:Items(t) for id, rec in pairs(t) do FP.bisItems[id] = rec end end
+function B:Chain(qid, head, fn) head.id = "bis/q" .. qid; head.fn = fn; head.quest = qid; FP.bisChains[qid] = head end
+function B:Dungeon(head, fn)
+  head.fn = fn
+  head.key = head.faction .. ":" .. head.id
+  head.id = "bis/" .. head.faction:lower() .. "/" .. head.id:gsub("%W", ""):lower()
+  FP.bisDungeons[head.key] = head
+end
+function B:Plan(cls, spec, faction, bands) FP.bisPlans[cls .. ":" .. spec .. ":" .. faction] = bands end
+
 -- Class files: FP:RegisterClass({ class = "WARLOCK", recommended = "affliction",
 --   specs = { affliction = { name = "...", talents = {...}?, macros = {...}, gear = {...}, ... } } })
 function FP:RegisterClass(c)
@@ -145,10 +159,15 @@ local function MakeStep(seg, i, st, prefix)
   return step
 end
 
+local CLASS_BIT = { WARRIOR = 1, PALADIN = 2, HUNTER = 4, ROGUE = 8, PRIEST = 16, SHAMAN = 64, MAGE = 128, WARLOCK = 256, DRUID = 1024 }
+FP.CLASS_BIT = CLASS_BIT
+
+local function HasBit(mask, bit) return bit and math.floor(mask / bit) % 2 == 1 end
+
 function FP:SegmentSteps(seg, prefix)
   local out = {}
   for i, st in ipairs(Steps(seg)) do
-    if self:Matches(st.f) then
+    if self:Matches(st.f) and (not st.cls or st.cls == 0 or HasBit(st.cls, CLASS_BIT[self.class])) then
       local had = st.g and #st.g > 0
       local step = MakeStep(seg, i, st, prefix)
       if not had or #step.q > 0 then out[#out + 1] = step end
@@ -220,6 +239,10 @@ function FP:BuildPlan()
     for _, s in ipairs(legacy.route) do route[#route + 1] = s end
     names[#names + 1] = legacy.routeName or "your class route"
   end
+  -- Best-in-slot gear: quest chains and dungeon runs the route doesn't already do (not for a class file
+  -- with its own route and gear, like the Druid's).
+  local bis = not (legacy and legacy.gear) and not spec.gear and self.bisPlans[(self.class or "") .. ":" .. (specKey or "") .. ":" .. (self.faction or "")]
+  if bis then self:InsertGearRoute(route, bis) end
   -- Class quests you chose to do, placed before the step you were on when you started them.
   local det = self.char and self.char.detours or {}
   for sideId, anchor in pairs(det) do
@@ -260,6 +283,7 @@ function FP:BuildPlan()
   plan.accepts, plan.questSteps = accepts, questSteps
   plan.route = route
   plan.routeChain = names
+  if bis then plan.gear = self:GearFromBiS(bis, route, questSteps); plan.gearSource = "bis" end
 
   local specName = (legacy and legacy.name) or spec.name or (build and build.spec) or ""
   plan.name = legacy and legacy.name or ((specName ~= "" and (specName .. " ") or "") .. (self.className or self.class or ""))
@@ -268,6 +292,130 @@ function FP:BuildPlan()
   self.plan = plan
   self.stepIdx = nil
   return plan
+end
+
+------------------------------------------------------------------------
+-- Best-in-slot gear route
+------------------------------------------------------------------------
+local function Turnins(route)
+  local t = {}
+  for _, s in ipairs(route) do
+    for _, o in ipairs(s.q or {}) do if o.k == "t" and o.id then t[o.id] = true end end
+  end
+  return t
+end
+
+-- Puts a detour's steps before the first route step at its level, or a little later where the
+-- route is in the same zone as the detour.
+local function InsertAt(route, detour, steps, after)
+  local lv = detour.lv or 1
+  local at = #route + 1
+  for i, s in ipairs(route) do
+    if (s.lvl or 0) >= lv then at = i; break end
+  end
+  if detour.m then
+    for j = at, math.min(#route, at + 40) do
+      if route[j].map == detour.m then at = j; break end
+    end
+  end
+  if after and at < after then at = after end   -- keep detours in level order
+  for k, s in ipairs(steps) do table.insert(route, at + k - 1, s) end
+  return at + #steps
+end
+
+function FP:InsertGearRoute(route, bands)
+  local done = Turnins(route)
+  local chains, dungeons, seen = {}, {}, {}
+  local wantDungeons = not (self.char and self.char.setup and self.char.setup.dungeons == false)
+  for _, band in ipairs(bands) do
+    for _, e in ipairs(band[3]) do
+      local it = self.bisItems[e[2]]
+      if it then
+        if it.d then
+          local dg = self.bisDungeons[(self.faction or "") .. ":" .. it.d]
+          if dg and wantDungeons and not seen[dg.key] then seen[dg.key] = true; dungeons[#dungeons + 1] = dg end
+        elseif it.q and not done[it.q] and not seen[it.q] then
+          seen[it.q] = true
+          local ch = self.bisChains[it.q]
+          if ch then chains[#chains + 1] = ch end
+        end
+      end
+    end
+  end
+  local all = {}
+  for _, ch in ipairs(chains) do all[#all + 1] = { d = ch, sec = "Gear: " .. (ch.title or "quest") } end
+  for _, dg in ipairs(dungeons) do all[#all + 1] = { d = dg, sec = "Dungeon: " .. (dg.title or "") } end
+  table.sort(all, function(a, b) if (a.d.lv or 0) ~= (b.d.lv or 0) then return (a.d.lv or 0) < (b.d.lv or 0) end return a.d.id < b.d.id end)
+  local after
+  for _, x in ipairs(all) do
+    local d = x.d
+    local seg = { id = d.id, title = d.title, min = d.lv or 1, max = d.lv or 1, fn = d.fn, steps = d.steps }
+    local steps = {}
+    for _, s in ipairs(self:SegmentSteps(seg)) do
+      -- quests your route already does are left to the route
+      local keep = {}
+      for _, o in ipairs(s.q) do
+        if not (o.id and o.id ~= 0 and done[o.id] and (o.k == "a" or o.k == "t" or o.k == "o" or o.k == "c")) then keep[#keep + 1] = o end
+      end
+      if #keep > 0 then s.q = keep; s.sec = x.sec; s.gear = true; steps[#steps + 1] = s end
+    end
+    d.steps = seg.steps
+    if #steps > 0 then after = InsertAt(route, d, steps, after) end
+  end
+end
+
+-- The Gear tab's tables from a best-in-slot plan, each item linked to the step that gets it.
+function FP:GearFromBiS(bands, route, questSteps)
+  local runStep = {}
+  for _, s in ipairs(route) do
+    if s.gear and s.title and s.title:find("^Run ") and s.seg then runStep[s.seg] = s.key end
+  end
+  local function info(id)
+    local it = self.bisItems[id]
+    if not it then return nil end
+    local step
+    if it.d then
+      local dg = self.bisDungeons[(self.faction or "") .. ":" .. it.d]
+      if it.npc and dg then step = runStep[dg.id] end
+      if not step and it.q then
+        local where = questSteps[it.q]
+        if where then
+          for k = #where, 1, -1 do
+            local s = route[where[k]]
+            for _, o in ipairs(s.q) do if o.k == "t" and o.id == it.q then step = s.key end end
+            if step then break end
+          end
+        end
+      end
+      if not step and dg then step = runStep[dg.id] end
+    elseif it.q then
+      local where = questSteps[it.q]
+      for k = #(where or {}), 1, -1 do
+        local s = route[where[k]]
+        for _, o in ipairs(s.q) do if o.k == "t" and o.id == it.q then step = s.key end end
+        if step then break end
+      end
+    end
+    return it[1], it[2], step
+  end
+  local gear = {}
+  for _, band in ipairs(bands) do
+    local lo, hi = band[1], band[2]
+    local g = { from = lo, to = hi, label = (lo == hi) and ("Level " .. lo) or ("Levels %d-%d"):format(lo, hi), slots = {} }
+    for _, e in ipairs(band[3]) do
+      local name, src, step = info(e[2])
+      if name then
+        local sl = { slot = e[1], best = name, src = src, step = step }
+        if e[3] then
+          local an, asrc, astep = info(e[3])
+          sl.alt, sl.altsrc, sl.altstep = an, asrc, astep
+        end
+        g.slots[#g.slots + 1] = sl
+      end
+    end
+    gear[#gear + 1] = g
+  end
+  return gear
 end
 
 -- Route data for the other faction is never used by this character; let it be freed.
@@ -468,7 +616,7 @@ function FP:CondTrue(c)
     if pick == nil then pick = self.char.setup and self.char.setup.group end
     r = pick and true or false
   elseif k == "dungeon" then
-    r = (self.char.setup and self.char.setup.dungeons) and true or false
+    r = not (self.char.setup and self.char.setup.dungeons == false)
   elseif k == "done" then
     r = false
     for i, s in ipairs(self.plan.route) do
@@ -620,10 +768,11 @@ end
 ------------------------------------------------------------------------
 -- First login: the one-time setup
 ------------------------------------------------------------------------
-function FP:ApplySetup(spec, group)
+function FP:ApplySetup(spec, group, dungeons)
   local first = self.char.setup == nil
   local old = self.char.setup and self.char.setup.spec
-  self.char.setup = { spec = spec or self:CurrentSpec(), group = group and true or false, version = 1 }
+  if dungeons == nil then dungeons = not (self.char.setup and self.char.setup.dungeons == false) end
+  self.char.setup = { spec = spec or self:CurrentSpec(), group = group and true or false, dungeons = dungeons and true or false, version = 2 }
   self:BuildPlan()
   if first or old ~= self.char.setup.spec then self.char.needCatchup = true end
   self:ScanTalents()
