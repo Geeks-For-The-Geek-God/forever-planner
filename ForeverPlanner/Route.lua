@@ -248,7 +248,8 @@ function FP:BuildPlan()
     s.num = i
     for _, o in ipairs(s.q or {}) do
       if o.id and o.id ~= 0 and (o.k == "a" or o.k == "t" or o.k == "c" or o.k == "o") then
-        questSteps[o.id] = true
+        questSteps[o.id] = questSteps[o.id] or {}
+        table.insert(questSteps[o.id], i)
         if o.k == "a" then
           accepts[o.id] = accepts[o.id] or {}
           table.insert(accepts[o.id], i)
@@ -288,18 +289,31 @@ function FP:SideMatches(side)
   return ListMatches(side.classes, self.class)
 end
 
+-- A class quest guide is done when you already have what it rewards (the spell, or one of its items),
+-- or you've handed in its last quest for your race and faction.
 function FP:SideDone(side)
-  local any = false
-  if not side.fn and not side.steps then return false end
+  for i, id in ipairs(side.spells or {}) do
+    if self:KnowsSpell(id) or self:KnowsSpellName(side.spellNames and side.spellNames[i]) then return true end
+  end
+  for _, id in ipairs(side.items or {}) do
+    if GetItemCount and ((GetItemCount(id, true) or 0) > 0) then return true end
+  end
+  local last = self:SideLastQuest(side)
+  return last and self.char.doneIds[last] ~= nil or false
+end
+
+-- The last quest handed in on a class quest guide, counting only steps and goals for your race and faction.
+function FP:SideLastQuest(side)
+  if not side.fn and not side.steps then return nil end
+  local last
   for _, st in ipairs(Steps(side)) do
-    for _, g in ipairs(st.g or {}) do
-      if g[1] == "t" and self:Matches(g.f) then
-        any = true
-        if not self.char.doneIds[g[2]] then return false end
+    if self:Matches(st.f) then
+      for _, g in ipairs(st.g or {}) do
+        if g[1] == "t" and self:Matches(g.f) then last = g[2] end
       end
     end
   end
-  return any
+  return last
 end
 
 -- Side guides for your level that you haven't done, started or dismissed.
@@ -310,12 +324,23 @@ function FP:SideReady()
   for id, side in pairs(self.sides) do
     if self:SideMatches(side) and lvl >= side.min and lvl <= side.max + 6
         and not (self.char.detours and self.char.detours[id]) and not (self.char.sideDismissed and self.char.sideDismissed[id])
-        and not self:SideDone(side) then
+        and not self:SideDone(side) and not self:SideOnRoute(side) then
       out[#out + 1] = side
     end
   end
   table.sort(out, function(a, b) if a.min ~= b.min then return a.min < b.min end return a.id < b.id end)
   return out
+end
+
+-- Your route already does this class quest (its last quest is a route step), so it isn't offered separately.
+function FP:SideOnRoute(side)
+  local last = self:SideLastQuest(side)
+  local where = last and self.plan and self.plan.questSteps and self.plan.questSteps[last]
+  for _, i in ipairs(where or {}) do
+    local st = self.status[i]
+    if st ~= "skipped" and st ~= "na" then return true end
+  end
+  return false
 end
 
 function FP:StartSide(id)
@@ -376,6 +401,34 @@ function FP:KnowsSpell(id)
   if IsPlayerSpell then local ok, r = pcall(IsPlayerSpell, id); if ok and r then return true end end
   if IsSpellKnown then local ok, r = pcall(IsSpellKnown, id); if ok and r then return true end end
   return false
+end
+
+-- Looks a spell up in your spellbook by name (for when the client's spell ID differs from the data's).
+function FP:KnowsSpellName(name)
+  if not name or name == "" then return false end
+  local want = Norm(name)
+  local found = false
+  pcall(function()
+    if C_SpellBook and C_SpellBook.GetNumSpellBookSkillLines and C_SpellBook.GetSpellBookSkillLineInfo then
+      for t = 1, C_SpellBook.GetNumSpellBookSkillLines() do
+        local info = C_SpellBook.GetSpellBookSkillLineInfo(t)
+        local off, n = info and info.itemIndexOffset or 0, info and info.numSpellBookItems or 0
+        for i = off + 1, off + n do
+          local nm = C_SpellBook.GetSpellBookItemName(i, Enum.SpellBookSpellBank.Player)
+          if nm and Norm(nm) == want then found = true; return end
+        end
+      end
+    elseif GetNumSpellTabs and GetSpellTabInfo and GetSpellBookItemName then
+      for t = 1, GetNumSpellTabs() do
+        local _, _, off, n = GetSpellTabInfo(t)
+        for i = (off or 0) + 1, (off or 0) + (n or 0) do
+          local nm = GetSpellBookItemName(i, BOOKTYPE_SPELL or "spell")
+          if nm and Norm(nm) == want then found = true; return end
+        end
+      end
+    end
+  end)
+  return found
 end
 
 local function Ids(q) if type(q) == "table" then return q end return { q } end

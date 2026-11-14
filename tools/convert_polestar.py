@@ -294,6 +294,14 @@ def convert_guide(gd, coords):
     }
     if gd.get('category') == 'Class':
         seg['why'] = res(gd.get('why'))
+        rewards = gd.get('reward') or []
+        spells = [r for r in rewards if r.get('spell')]
+        items = [r for r in rewards if r.get('item')]
+        if spells:
+            seg['spells'] = [r['spell'] for r in spells]
+            seg['spellNames'] = [r.get('spellName') or '' for r in spells]
+        if items:
+            seg['items'] = [r['item'] for r in items]
         seg['folder'] = gd.get('folder')
     zones = {}
     for k, v in (gd.get('names') or {}).items():

@@ -354,5 +354,14 @@ c = run("local s = ForeverPlanner.plan.route[ForeverPlanner.current]; return s.k
 check(":" not in c, "existing Druid: caught up past the starting zones to the Druid route (step %s)" % c)
 check(run("return ForeverPlanner.char.lastCatchup and #ForeverPlanner.char.lastCatchup > 50"), "catchup can be undone")
 
+# Class quests you already have aren't offered (Cure Poison, 14 Nov report)
+run("PLAYER_LEVEL = 22; KNOWN = {}; function IsPlayerSpell(id) return KNOWN[id] or false end; ForeverPlanner.char.sideDismissed = nil")
+ready = lambda: run("local t={} for _,s in ipairs(ForeverPlanner:SideReady()) do t[#t+1]=s.id end return table.concat(t,',')")
+check("class/druid/cure-poison" in ready(), "Cure Poison offered to a Druid who hasn't got it: " + ready())
+run("KNOWN[8946] = true")
+check("class/druid/cure-poison" not in ready(), "not offered once you know Cure Poison")
+run("KNOWN = {}; ForeverPlanner.char.doneIds[6130] = 'Power over Poison'")
+check("class/druid/cure-poison" not in ready(), "not offered once the Horde chain's last quest is handed in (the Alliance version doesn't count against you)")
+
 print("FAILURES:", len(fails))
 sys.exit(1 if fails else 0)
