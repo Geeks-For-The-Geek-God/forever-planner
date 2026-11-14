@@ -301,7 +301,10 @@ function FP:UpdateTracker()
 
   local pts = self:UnspentTalentPoints()
   local tl, tt = self:NextTalent()
-  if pts and pts > 0 and tt then
+  if self:NeedsRespec() then
+    tracker.talent:SetText("|cffff9933Time to respec:|r reset your talents at your class trainer (Talents tab has the new order)")
+    place(tracker.talent, 5)
+  elseif pts and pts > 0 and tt then
     tracker.talent:SetText(("Talent point ready: %s%s|r"):format(WHITE, tt))
     place(tracker.talent, 5)
   else
@@ -402,8 +405,17 @@ end
 
 local function TalentList()
   local p = FP.plan
+  local ph = FP:TalentPhase() or { talents = {} }
   local list = { { header = true, text = GOLD .. p.name .. "|r" } }
-  if p.talentNote then list[#list + 1] = { text = p.talentNote } end
+  if ph.note then list[#list + 1] = { text = ph.note } end
+  if FP:NeedsRespec() then
+    list[#list + 1] = { text = "|cffff9933Time to respec:|r reset your talents at your class trainer, then spend them in this order.", focus = true }
+  end
+  if p.talentPhases then
+    for _, other in ipairs(p.talentPhases) do
+      if other ~= ph and other.title then list[#list + 1] = { text = GREY .. other.title .. "|r" } end
+    end
+  end
   local pts = FP:UnspentTalentPoints()
   if pts then list[#list + 1] = { text = ("Unspent talent points: %s%d|r"):format(WHITE, pts) } end
   if not FP.talentRanks then
@@ -411,7 +423,7 @@ local function TalentList()
   end
   local nextLvl = FP:NextTalent()
   for level = 1, 60 do
-    local text = p.talents[level]
+    local text = ph.talents[level]
     if text then
       local name, rank = FP:ParseTalent(text)
       local taken
@@ -419,9 +431,9 @@ local function TalentList()
       else taken = level < FP:PlayerLevel() end
       local icon = taken and OK or ((level == nextLvl) and WAIT or DOT)
       local t = (level == nextLvl) and (GOLD .. text .. "|r") or (taken and (GREY .. text .. "|r") or text)
-      list[#list + 1] = { text = ("%s  %d: %s"):format(icon, level, t), focus = (level == nextLvl) }
-      if p.talentNotes and p.talentNotes[level] then
-        list[#list + 1] = { text = "      " .. GREY .. p.talentNotes[level] .. "|r" }
+      list[#list + 1] = { text = ("%s  %d: %s"):format(icon, FP:TalentLevelLabel(level), t), focus = (level == nextLvl) }
+      if ph.notes and ph.notes[level] then
+        list[#list + 1] = { text = "      " .. GREY .. ph.notes[level] .. "|r" }
       end
     end
   end
@@ -862,7 +874,10 @@ function FP:UpdateTalentGlow()
   elseif info and info.tabName then
     where = "\n" .. info.tabName .. " tree"
   end
-  local lead = (pts and pts > 0) and ("Spend your point: " .. WHITE .. nxt.text .. "|r") or ("Next pick (level " .. nxt.level .. "): " .. WHITE .. nxt.text .. "|r")
+  local lead = (pts and pts > 0) and ("Spend your point: " .. WHITE .. nxt.text .. "|r") or ("Next pick (level " .. self:TalentLevelLabel(nxt.level) .. "): " .. WHITE .. nxt.text .. "|r")
+  if self:NeedsRespec() then
+    lead = "|cffff9933Time to respec:|r reset your talents at your class trainer. Then: " .. WHITE .. nxt.text .. "|r"
+  end
   hint.text:SetText(GOLD .. "Forever Planner|r  " .. lead .. where)
   hint:SetHeight(hint.text:GetStringHeight() + 12)
   hint:Show()

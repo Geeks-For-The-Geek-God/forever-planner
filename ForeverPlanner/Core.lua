@@ -3,9 +3,10 @@
 
 ForeverPlanner = ForeverPlanner or {}
 local FP = ForeverPlanner
-FP.version = "0.6.4"
+FP.version = "0.6.5"
 -- Shown once after an update (newest first). Keep each line short.
 FP.news = {
+  "Priest: the plan from your Priest brief. Discipline wand talents to 39 with the talent hint, a respec reminder at 40 and the Shadow order after it, the five-key macros, trainer reminders, the wand path, and Shadow gear from 40.",
   "The gear panel now sits clear of the character window's side tabs, the Show/Hide button is below the character window, and the header no longer cuts off your spec name.",
   "Craft now: a new tab on the gear panel (press C) lists gear your professions can make right now that beats what you're wearing, as a backup until you get the plan's pick, plus the next recipe worth skilling up for. An anvil on a plan row means there's a backup for that slot.",
   "Tidier gear panel: one clean row per slot, short sources, the step on the right, and only slots with an upgrade to get are marked on the character window.",
@@ -960,9 +961,45 @@ function FP:UnspentTalentPoints()
   return nil
 end
 
+-- The talent order that applies at your level. A class file can give phases (talentPhases), e.g. a
+-- Discipline wand build to 39 and a respec into Shadow at 40; otherwise it's plan.talents.
+function FP:TalentPhase()
+  local p = self.plan
+  if not p then return nil end
+  local phases = p.talentPhases
+  if not phases or #phases == 0 then return { talents = p.talents or {}, notes = p.talentNotes, note = p.talentNote, from = 1 } end
+  local lvl, pick = self:PlayerLevel(), phases[1]
+  for _, ph in ipairs(phases) do if lvl >= (ph.from or 1) then pick = ph end end
+  return pick
+end
+
+-- The level a pick shows at: a respec phase's first points are all there at the respec level.
+function FP:TalentLevelLabel(level)
+  local ph = self:TalentPhase()
+  if ph and ph.respec and level < (ph.from or 1) then return ph.from end
+  return level
+end
+
+-- True when you're in a respec phase and still have points in talents its order doesn't use.
+function FP:NeedsRespec()
+  local ph = self:TalentPhase()
+  if not (ph and ph.respec and self.talentRanks) then return false end
+  local planned = {}
+  for _, text in pairs(ph.talents or {}) do
+    local name, rank = self:ParseTalent(text)
+    local k = Norm(name)
+    planned[k] = math.max(planned[k] or 0, rank)
+  end
+  for k, rank in pairs(self.talentRanks) do
+    if rank > (planned[k] or 0) then return true end
+  end
+  return false
+end
+
 -- Returns the level and text of the next talent pick you haven't taken.
 function FP:NextTalent()
-  local t = self.plan and self.plan.talents
+  local ph = self:TalentPhase()
+  local t = ph and ph.talents
   if not t then return nil end
   local lvl = self:PlayerLevel()
   for level = 1, 60 do
@@ -1412,7 +1449,7 @@ end
 -- -> rows { slot, id, rec, state = "now" | "check" | "recipe" | "skill" | "bags", have, gain, worn }, skills, why
 function FP:CraftNow()
   local skills = self:ProfessionSkills()
-  local spec = self:CurrentSpec()
+  local spec = self.GearSpecAt and self:GearSpecAt(self:PlayerLevel()) or self:CurrentSpec()
   local key = (self.class or "") .. ":" .. (spec or "")
   local cp, ws = self.craftPlans and self.craftPlans[key], self.specWeights and self.specWeights[key]
   if not (cp and ws) then return {}, skills, "nodata" end
@@ -1498,8 +1535,12 @@ end
 function FP:OnLevelUp(level)
   local p = self.plan
   if not p then return end
-  if p.talents and p.talents[level] then
-    self:Print(("Level %d talent: |cffffd100%s|r"):format(level, p.talents[level]))
+  local ph = self:TalentPhase()
+  if ph and ph.respec and level == ph.from and self:NeedsRespec() then
+    self:Print(("Level %d: time to respec. Reset your talents at your class trainer, then follow the new order on the Talents tab%s."):format(
+      level, ph.note and (" (" .. ph.note .. ")") or ""))
+  elseif ph and ph.talents and ph.talents[level] then
+    self:Print(("Level %d talent: |cffffd100%s|r"):format(level, ph.talents[level]))
   end
   if p.training and p.training[level] then
     self:Print(("New at the trainer: %s"):format(p.training[level]))

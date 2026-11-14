@@ -217,6 +217,35 @@ function FP:SpecChoices()
   return out
 end
 
+-- The spec whose gear and craft lists apply at a level: a class file can switch with
+-- spec.gearSpecs = { { from = 40, spec = "shadow" } } (e.g. Discipline wand to 39, Shadow from 40).
+function FP:GearSpecAt(level)
+  local specKey = self:CurrentSpec()
+  local cls = self.classes[self.class] or {}
+  local spec = cls.specs and cls.specs[specKey]
+  local out = specKey
+  for _, g in ipairs(spec and spec.gearSpecs or {}) do if level >= g.from then out = g.spec end end
+  return out
+end
+
+-- The best-in-slot bands for this character, each band taken from the spec that applies at its levels.
+function FP:BiSBands()
+  local function bands(k) return self.bisPlans[(self.class or "") .. ":" .. (k or "") .. ":" .. (self.faction or "")] end
+  local base = bands(self:CurrentSpec())
+  if not base then return nil end
+  local out, mixed = {}, false
+  for i, b in ipairs(base) do
+    local k = self:GearSpecAt(b[1])
+    local other = k ~= self:CurrentSpec() and bands(k)
+    local pick = b
+    if other then
+      for _, ob in ipairs(other) do if ob[1] == b[1] then pick = ob; mixed = true end end
+    end
+    out[i] = pick
+  end
+  return mixed and out or base
+end
+
 -- Assembles self.plan for this character.
 function FP:BuildPlan()
   local cls = self.classes[self.class] or {}
@@ -229,7 +258,8 @@ function FP:BuildPlan()
   local plan = { class = self.class, spec = specKey }
   local function pick(k) return (legacy and legacy[k]) or spec[k] or cls[k] end
   plan.talents = pick("talents") or (build and build.talents) or {}
-  plan.talentNotes = (not legacy and not spec.talents and build) and build.notes or nil
+  plan.talentPhases = pick("talentPhases")
+  plan.talentNotes = pick("talentNotes") or ((not legacy and not spec.talents and build) and build.notes or nil)
   plan.talentNote = pick("talentNote") or (build and ("%s build %s, from %s (%s)."):format(build.spec, build.split,
     builds.source or "ForeverDB", builds.checkedOn or "")) or nil
   for _, k in ipairs({ "macros", "training", "gear", "stopgaps", "sets", "macroNote" }) do plan[k] = pick(k) end
@@ -249,7 +279,7 @@ function FP:BuildPlan()
   end
   -- Best-in-slot gear: quest chains and dungeon runs the route doesn't already do (not for a class file
   -- with its own route and gear, like the Druid's).
-  local bis = not (legacy and legacy.gear) and not spec.gear and self.bisPlans[(self.class or "") .. ":" .. (specKey or "") .. ":" .. (self.faction or "")]
+  local bis = not (legacy and legacy.gear) and not spec.gear and self:BiSBands()
   if bis then self:InsertGearRoute(route, bis) end
   -- Class quests you chose to do, placed before the step you were on when you started them.
   local det = self.char and self.char.detours or {}
